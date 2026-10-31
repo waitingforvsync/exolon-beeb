@@ -50,7 +50,8 @@ start zone `&12FA` (0-124).
 - Keys: O, P, Q, A and SPACE (left, right, up, down, fire; the title offers to redefine them), read from the
   keyboard matrix into `&3AA5` and decoded at `&0D20`. A Spectrum keyboard read (`IN A,(&FE)`) survives at
   `&0E83`: the code came from the Spectrum version.
-- Random numbers: `&3AE7`, a 16-bit generator (seed × 13 + 7, at `&3B02`). The R register isn't read, so the
+- Random numbers: `&3AE7`, a 16-bit generator (seed' = 13 × (seed + 7), at `&3B02`; the result is the caller's
+  A EOR the new seed's high byte: `docs/cpc-loop.md`). The R register isn't read, so the
   game's play follows from its keys alone.
 - Sound: the AY written directly. `&63AF` services 16 slots of 16 bytes at `&6A1C` and is called three times
   a pass (Phase 1).
@@ -97,7 +98,8 @@ passes of random play with the game's keys (walking, jumping, firing, turning, d
 - **20.9 passes a second** (from the mean pass). 74% of passes take more than 2 frames, 5.6% more than 3.
 - The longest: the zone change (268 ms, zone 0 to 1) and the player turning round (145-155 ms a pass, against
   about 46: the mirroring).
-- The player walks 1 pixel a pass, the finest step MODE 0 has. A jump rises 1, 1, 1, 2, 2, 2, 4, 4.
+- The player walks 1 pixel a pass, the finest step MODE 0 has. A jump rises 4, 4, 2, 2, 2, 1, 1, 1, 1, holds 4
+  passes, and falls 1, 1, 1, 1, 2, 2, 2, 4, 4: 22 passes (`docs/cpc-player.md`).
 
 ### Sizes, and ZX02
 | Block | Bytes | ZX02 |

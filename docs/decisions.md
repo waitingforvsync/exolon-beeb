@@ -94,6 +94,7 @@ let's stay with standard zx02."
 ### D17. One fire button: RETURN (2026-10-31, from P13)
 Rich: "oh, if there's one fire button, just leave it as RETURN."
 - Z left, X right, `:` up, `/` down, RETURN fire. SPACE does nothing unless Phase 1 finds a second action.
+- Phase 1B found none: a grenade is thrown by holding fire 15 passes (`docs/cpc-player.md`). So it stands.
 
 ### D18. Redefining the keys goes in a loader program, later (2026-10-31)
 Rich: "I would move redefine keys option into a loader program which you can do just once before the main game
@@ -245,6 +246,31 @@ placements are identical, but for two things. Follow which?
 - The barrier kills only at exactly px + 12 = its x.
 - The launchers' scan stops early in a pass.
 - Effects are dropped silently when their list is full.
+
+### O10. The time limit in a zone (2026-10-31, Phase 1B)
+After 700 passes in a zone (reset by a death) a time-out missile comes, and another whenever one ends. That's
+33.5 s on the CPC and 28 s at the BBC's 25 passes a second. Keep 700 passes, or scale it to keep the CPC's
+seconds (about 840)?
+
+### O11. The high-score table (2026-10-31, Phase 1B)
+This disc's hacker replaced the names with greetings ("ARAGORN", "GREETZ" ...). The Spectrum original's are
+there in its table (a leftover "SURYANI" past the CPC's table matches the Spectrum's second). The Spectrum keeps
+50 entries, the CPC 17. Which names, and how many? And fix the CPC's name-entry bug (the 9th and 10th
+characters keep the displaced entry's letters)?
+
+### O12. Pause, restart and the cheat (2026-10-31, Phase 1B)
+The CPC pauses on ESCAPE and restarts on CTRL+SHIFT+ESCAPE; the Spectrum pauses on 3 and quits on 0+9+8+7.
+Defining the keys as Z, O, R, B, A toggles infinite lives on both. Which keys on the BBC, and does the cheat go
+into the define-keys loader (D18)?
+
+### O13. Lockstep at two places the Z80 passes A from AF' (2026-10-31, Phase 1B)
+Every random number depends on the caller's A; two call sites take A from AF' (cosmetic uses, but they change
+the seed). Copy that, so the BBC stays in lockstep with the original, or let them diverge and check lockstep
+only up to them?
+
+### O14. The turn's still pass (2026-10-31, Phase 1B)
+Turning round costs a pass with no step (the mirroring's 96.7 ms is the CPC's, not the rule's). Claude
+recommends keeping the still pass: it's the original's feel on both machines.
 
 ### O9. The stars: random on every visit? (2026-10-31, Phase 1C)
 Each visit to a zone scatters 66 one-pixel stars in pens 1-7, from the random generator, before the scenery is

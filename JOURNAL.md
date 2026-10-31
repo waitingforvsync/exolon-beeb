@@ -129,3 +129,17 @@ What's been done, newest last, with measurements. Decisions are in `docs/decisio
   revised for it.
 - Against the Spectrum: the same in every rule but the four empty object scripts and one alien path byte (O7).
   Questions O7-O9 for Rich.
+
+### Phase 1B: the loop, the player and the flow (`docs/cpc-loop.md`, `cpc-player.md`, `cpc-flow.md`; an agent)
+- The CPC's game logic is the Spectrum's code, unchanged bar the platform's calls: 136 passes of the same keys
+  gave the same player, bolts, grenade and counts on both (`work/player/speccmp.py`).
+- 53 calls a pass. The laser's bolts move a pixel a call, `&11C5` 5 times a pass; the grenade 1 step a pass
+  for 13 passes, then 3 (`&1F89`). The padding `&2B9C` always draws 6 blank objects: its counter `&2BB1` is
+  never incremented, on the Spectrum too. Both paddings cost 15.6-22.6 ms a pass.
+- Corrections to the plan: the random generator is seed' = 13 × (seed + 7), the result A EOR its high byte; a
+  jump rises 4, 4, 2, 2, 2, 1, 1, 1, 1, holds 4 passes and falls 1, 1, 1, 1, 2, 2, 2, 4, 4 (22 passes). My log
+  had the fall.
+- A grenade is thrown by holding fire 15 passes: no sixth key (D17 stands).
+- Stages of 25 zones, each with a start point; 9 lives, one more at a stage's end; 700 passes in a zone before
+  a time-out missile; the game loops to zone 0 after 124.
+- Questions O10-O14 for Rich.
