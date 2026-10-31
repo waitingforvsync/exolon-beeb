@@ -38,13 +38,14 @@ SECTION Exo2, org = LoadFloor, load = &FFFF0000+LoadFloor, exec = &FFFF0000+entr
         PADTO BreakAddr
         EQUB 2                          ; clear memory on BREAK
 
-        INCLUDE "../build/gen/xor8code.6502"    ; the 8-line sprites compiled (sprites.6502's xor8)
+        INCLUDE "game.6502"             ; the main loop: the game (or the bench, or the zone viewer)
+        INCLUDE "player.6502"           ; the player
+        INCLUDE "status.6502"           ; the status rows
 
         PADTO NmiOrg
         RTI                             ; stray NMIs
 
-        INCLUDE "game.6502"             ; the main loop: the game (or the bench, or the zone viewer)
-        INCLUDE "player.6502"           ; the player
+        INCLUDE "../build/gen/xor8code.6502"    ; the 8-line sprites compiled (sprites.6502's xor8)
         IF DEFINED(BENCH)
             INCLUDE "bench.6502"        ; the plotter timed over the original's plots (paging the data's bank)
         ENDIF

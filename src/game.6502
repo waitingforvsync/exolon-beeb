@@ -98,6 +98,7 @@ StartZone = 0
     LDA #StartZone:STA zone
     JSR new_game
     JSR enter_zone
+    JSR draw_status
     LDX irqframes:INX:STX wait_pass.passframe
 .loop
     JSR wait_pass:STA pkeys
@@ -138,6 +139,10 @@ ENDSECTION
     LDA #112:STA PlY:STA PlRy
     LDA #0
     STA PlJump:STA PlFell:STA PlDir:STA PlCycle:STA PlDuck:STA PlSuit:STA PlExit
+    LDA #99:STA Ammo
+    LDA #10:STA Grenades
+    LDA #9:STA Lives
+    LDA #0:STA Score:STA Score+1:STA Score+2
     LDA #1:STA PlFacing:STA PlDir         ; (facing right, and walking so: the CPC's &10F1 is 1)
     LDX #23
 .right
@@ -153,6 +158,7 @@ ENDSECTION
 .enter_zone
 {
     LDX zone:JSR zone_enter
+    JSR draw_zone
     LDA #0
     LDX #MaxSlots-1
 .slots

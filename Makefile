@@ -26,7 +26,7 @@ TITLE := $(shell date +%y%m%d-%H%M)
 SRC = src/boot.6502 src/exolon.6502
 GENOUT = $(GEN)/pens.6502
 ZONEOUT = $(GEN)/scripts.6502 $(GEN)/lists.6502 $(GEN)/tilesets.6502 $(GEN)/tiles.6502 $(GEN)/tiles.bin
-SPROUT = $(GEN)/sprites.6502 $(GEN)/sprites.bin $(GEN)/xor8code.6502
+SPROUT = $(GEN)/sprites.6502 $(GEN)/sprites.bin $(GEN)/xor8code.6502 $(GEN)/font.6502
 DEPS = $(wildcard src/*.6502) $(GENOUT) $(ZONEOUT) $(SPROUT)
 
 all: $(BUILD)/exolon.ssd

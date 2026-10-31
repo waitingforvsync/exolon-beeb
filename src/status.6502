@@ -1,0 +1,235 @@
+\\ status.6502 - the status rows (docs/cpc-player.md, The status rows): the labels on row 22, and on row 23 the
+\\ ammo, grenades, score, lives and zone, each in its CPC pen (dithered as everything else). In main RAM.
+
+INCLUDE "../build/gen/font.6502"        ; the CPC's font, and the pens' bytes (tools/gensprites.py)
+
+StatusTop = PlayRows                    ; the labels' row; the numbers' the one after
+
+SECTION Workspace
+.Score                                  ; the score: 6 digits, BCD, the most significant first
+    SKIP 3
+.Ammo                                   ; 0-99
+    SKIP 1
+.Grenades                               ; 0-10
+    SKIP 1
+.Lives                                  ; 0-9
+    SKIP 1
+ENDSECTION
+
+ZA_AUTO1 spen                           ; the pen to print in
+ZA_AUTO1 scol                           ; the column to print at (on after each character)
+
+\\ A character at (scol, row Y) in spen, and scol on.
+\\
+\\ Inputs:
+\\     A: the character (&20-&5A)
+\\
+\\ Outputs:
+\\     scol: + 1
+\\     A, X: corrupted; Y preserved
+
+.print_char
+{
+    ZA_AUTO2 sp                         ; local: its cell
+    ZA_AUTO1 fi, nib, colour, row, line ; local: its font's byte; a line's pixels; the pen's byte; row; line
+
+    STY row
+    SEC:SBC #FontFirst:ASL A:ASL A:STA fi
+    TYA:ASL A:ADC #HI(ScreenAddr):STA sp+1   ; (C clear) the row's pages
+    LDA scol:LSR A:LSR A:LSR A:LSR A:CLC:ADC sp+1:STA sp+1  ; and the column's
+    LDA scol:ASL A:ASL A:ASL A:ASL A:STA sp
+    LDY #0
+.pair
+    LDX fi:LDA Font,X:STA nib
+    LSR A:LSR A:LSR A:LSR A:JSR put     ; (the even line: the top nibble)
+    LDA nib:AND #15:JSR put
+    INC fi
+    CPY #8:BNE pair
+    LDY row
+    INC scol
+    RTS
+
+    \\ line Y: 4 pixels' bits (A) in the pen, two bytes 8 apart
+
+.put
+    STA line
+    TYA:AND #1:STA colour:LDA spen:ASL A:ORA colour:TAX
+    LDA PenBytes,X:STA colour
+    LDA line:LSR A:LSR A:TAX
+    LDA Pix2,X:AND colour:STA (sp),Y
+    LDA line:AND #3:TAX
+    TYA:ORA #8:TAY
+    LDA Pix2,X:AND colour:STA (sp),Y
+    TYA:AND #7:TAY
+    INY
+    RTS
+}
+
+.Pix2                                   ; two pixels' bits (the left's bit 1) as a MODE 2 byte's
+    EQUB &00, &55, &AA, &FF
+
+\\ A string: its column, row and pen, then its characters, then a 0.
+\\
+\\ Inputs:
+\\     X, Y: its address (low, high)
+\\
+\\ Outputs:
+\\     A, X, Y: corrupted
+
+.print_text
+{
+    ZA_AUTO2 tp                         ; local: the text
+    ZA_AUTO1 ti, trow                   ; local: the next character's offset; the row
+
+    STX tp:STY tp+1
+    LDY #0:LDA (tp),Y:STA scol
+    INY:LDA (tp),Y:STA trow
+    INY:LDA (tp),Y:STA spen
+    INY
+.char
+    LDA (tp),Y:BEQ done
+    STY ti
+    LDY trow:JSR print_char
+    LDY ti:INY
+    BNE char                            ; (always: a string's short)
+.done
+    RTS
+}
+
+\\ A number's digits at (scol, row Y) in spen: two of a BCD byte (print_bcd2), or its low one (print_bcd1).
+\\
+\\ Outputs:
+\\     scol: on; A, X corrupted; Y preserved
+
+.print_bcd2
+{
+    STA bcd
+    LSR A:LSR A:LSR A:LSR A:ORA #'0':JSR print_char
+    LDA bcd
+    JMP print_bcd1
+}
+.print_bcd1
+{
+    AND #15:ORA #'0':JMP print_char     ; (and back)
+}
+ZA_AUTO1 bcd                            ; print_bcd2's byte
+
+\\ A binary byte as BCD: A (0-99) to its two digits; X its hundreds (to_bcd3, A 0-255).
+\\
+\\ Outputs:
+\\     A: the tens and units, BCD; X: the hundreds (to_bcd3); Y preserved
+
+.to_bcd3
+{
+    LDX #0
+.hundreds
+    CMP #100:BCC to_bcd
+    SBC #100:INX                        ; (C set)
+    BNE hundreds                        ; (always)
+}
+.to_bcd
+{
+    STX hund
+    LDX #0
+.tens
+    CMP #10:BCC units
+    SBC #10:INX                         ; (C set)
+    BNE tens                            ; (always)
+.units
+    STA bcd
+    TXA:ASL A:ASL A:ASL A:ASL A:ORA bcd
+    LDX hund
+    RTS
+}
+ZA_AUTO1 hund                           ; to_bcd3's hundreds
+
+\\ The status rows drawn whole (the CPC's &078F): the labels, then every number.
+
+.draw_status
+{
+    LDX #LO(LabelAmmo):LDY #HI(LabelAmmo):JSR print_text
+    LDX #LO(LabelGrenades):LDY #HI(LabelGrenades):JSR print_text
+    LDX #LO(LabelPoints):LDY #HI(LabelPoints):JSR print_text
+    LDX #LO(LabelLives):LDY #HI(LabelLives):JSR print_text
+    LDX #LO(LabelZones):LDY #HI(LabelZones):JSR print_text
+    JSR draw_ammo
+    JSR draw_grenades
+    JSR draw_score
+    JSR draw_lives
+    JMP draw_zone                       ; (and back)
+}
+
+.LabelAmmo                              ; column, row, pen, text (the CPC's &07A1)
+    EQUB 0, StatusTop, 13, "AMMO", 0
+.LabelGrenades
+    EQUB 5, StatusTop, 14, "GRENADES", 0
+.LabelPoints
+    EQUB 14, StatusTop, 12, "POINTS", 0
+.LabelLives
+    EQUB 21, StatusTop, 15, "LIVES", 0
+.LabelZones
+    EQUB 27, StatusTop, 11, "ZONES", 0
+
+\\ Each number on row 23, at its column and in its pen.
+\\
+\\ Outputs:
+\\     A, X, Y: corrupted
+
+.draw_ammo
+{
+    LDA #1:STA scol:LDA #15:STA spen
+    LDA Ammo:JSR to_bcd
+    LDY #StatusTop+1:JMP print_bcd2     ; (and back)
+}
+
+.draw_grenades
+{
+    LDA #8:STA scol:LDA #11:STA spen
+    LDA Grenades:JSR to_bcd
+    LDY #StatusTop+1:JMP print_bcd2
+}
+
+.draw_score
+{
+    LDA #14:STA scol:LDA #13:STA spen
+    LDY #StatusTop+1
+    LDA Score:JSR print_bcd2
+    LDA Score+1:JSR print_bcd2
+    LDA Score+2:JMP print_bcd2
+}
+
+.draw_lives
+{
+    LDA #23:STA scol:LDA #14:STA spen
+    LDY #StatusTop+1
+    LDA Lives:JMP print_bcd1
+}
+
+.draw_zone
+{
+    ZA_AUTO1 tu                         ; local: the tens and units
+
+    LDA #28:STA scol:LDA #14:STA spen
+    LDA zone:JSR to_bcd3:STA tu
+    LDY #StatusTop+1
+    TXA:JSR print_bcd1
+    LDA tu:JMP print_bcd2
+}
+
+\\ Points added to the score (the CPC's &3B04: a carry past the top digit is lost), and it redrawn.
+\\
+\\ Inputs:
+\\     A: the points' tens and units (BCD), X: their thousands and hundreds (BCD)
+\\
+\\ Outputs:
+\\     A, X, Y: corrupted
+
+.add_points
+{
+    SED
+    CLC:ADC Score+2:STA Score+2
+    TXA:ADC Score+1:STA Score+1
+    LDA Score:ADC #0:STA Score
+    CLD
+    JMP draw_score                      ; (and back)
+}

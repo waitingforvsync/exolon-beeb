@@ -35,6 +35,7 @@ OMITTED = {('Sprite32', f) for f in range(12, 24)} | {('Sprite16', f) for f in (
 SETS = [('Sprite32', 0x93CD, 25, 6, 32, False), ('Sprite16', 0xA68D, 45, 4, 16, False),
         ('Sprite8', 0x921D, 9, 3, 8, True)]
 Sprite8First = 140
+DOTS = [[[2, 11, 11, 2]], [[11], [3]]]             # the laser bolt (one line of 4 pixels), a gun's shot (1 x 2)
 
 
 def sprite(pens, s, pairs, shifted):
@@ -84,6 +85,26 @@ def sprites(m, pairs):
                     a = base + f * w * h
                     pens = [[p for b in m[a + y * w:a + y * w + w] for p in mode0_pens(b)] for y in range(h)]
                 out.append(sprite(pens, s, pairs, copies))
+    for lines in DOTS:                              # the dots, as 8-line frames: the bolt, a gun's shot
+        for s in (0, 1):
+            pens = [[0] * s + row + [0] * (6 - s - len(row)) for row in lines] + [[0] * 6] * (8 - len(lines))
+            out.append(sprite(pens, s, pairs, True))
+    return out
+
+
+def font(m):
+    """The CPC's font (characters &20-&5A at &6BDD, 2 bytes x 8 lines each) as 1-bit masks: 4 bytes a
+    character, two lines a byte (the first in the top nibble), the left pixel each nibble's bit 3."""
+    out = ['\\\\ font.6502 - made by tools/gensprites.py from docs/exolon.dsk: the CPC\'s font, characters &20-&5A,',
+           '\\\\ 4 bytes each: two lines of 4 pixels a byte, a bit a pixel set.', '', 'FontFirst = &20', '.Font']
+    for c in range(0x20, 0x5B):
+        a = 0x6BDD + 16 * (c - 0x20)
+        rows = []
+        for y in range(8):
+            px = [p for b in m[a + 2 * y:a + 2 * y + 2] for p in mode0_pens(b)]
+            rows.append(sum(1 << (3 - i) for i, p in enumerate(px) if p))
+        out.append('    EQUB ' + ', '.join(f'&{rows[2 * i] << 4 | rows[2 * i + 1]:02X}' for i in range(4)) +
+                   f'          ; {chr(c)!r}')
     return out
 
 
@@ -209,6 +230,7 @@ def main(out):
     lines = ['\\\\ sprites.6502 - made by tools/gensprites.py from docs/exolon.dsk: the sprites, trimmed and dithered,',
              '\\\\ and their tables (tools/gensprites.py says how they\'re numbered and placed).', '',
              f'SpriteCount = {n}', 'Sprite32 = 0', 'Sprite16 = 50', f'Sprite8 = {Sprite8First}',
+             f'SpriteBolt = {Sprite8First + 18}', f'SpriteShot = {Sprite8First + 20}',
              f'SpriteMaxW = {max(s[2] for s in sp)}', f'SpriteMaxH = {max(s[3] for s in sp)}', '',
              'ASSERT LO(P%) == 0, "the sprite tables: each in its own page"', '.SpriteTables']
     tables = (('SprW', [s[2] for s in sp]), ('SprH', [s[3] for s in sp]), ('SprDX', [s[0] for s in sp]),
@@ -235,6 +257,11 @@ def main(out):
         f.write('\n'.join(lines))
     with open(os.path.join(out, 'xor8code.6502'), 'w') as f:
         f.write('\n'.join(xor8_code(sp)))
+    pens = ['', '.PenBytes                               ; a CPC pen as a MODE 2 byte, both pixels: even lines, odd',
+            *[f'    EQUB &{gendata.mode2_byte(a, b):02X}, &{gendata.mode2_byte(b, a):02X}          ; pen {i}'
+              for i, (a, b) in enumerate(pairs)]]
+    with open(os.path.join(out, 'font.6502'), 'w') as f:
+        f.write('\n'.join(font(m) + pens) + '\n')
     total = sum(len(s[4]) for s in sp[:Sprite8First])
     print(f'{n} sprites, {total} bytes of data ({used} in the tables\' pages, {5 * (256 - n) - used} spare there)')
 
