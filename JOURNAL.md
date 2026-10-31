@@ -301,3 +301,37 @@ Plotting, cycles a pass (median / 90% / worst; passes over 40,000), the touch te
   pair (at most 9 large sprites live in these logs: 36 pairs, about 800 cycles), and per-pair bookkeeping costs
   as much as the test. Sweep and prune on a y-sorted list, kept by an insertion sort, is the form worth having,
   since the beam ordering needs that list anyway. To be measured when it's written.
+
+### The 8-line sprites compiled
+- D37 recorded: Rich chose the XOR mix where large sprites meet, "for authenticity if nothing else".
+- A profile of zone 94's slowest passes (185-220, PC sampled every 23 cycles): the debris 27.7% (its compiled
+  code 23.3%), the other 8-line sprites 26.7% (`XorRuns` 21.5%), the large sprites about 29% (the behind-the-map
+  draw 11.4%, `walk` 10.9%), the bench's own decoding 14.6%. The spores (frame 7) are the most XORed object in
+  the logs (22,541 XORs, the debris 8,415), and 37% of the bytes `XorRuns` XORed were zero.
+- `xor8` now runs compiled copies (gensprites' `xor8_code`) for every 8-line sprite but the debris (compiled per
+  even phase already) and the blank: `LDY #8k+j:LDA (p),Y:EOR #v:STA (p),Y` for each byte that isn't zero (15
+  cycles), two copies a sprite: lines 7 to 0 through `xt`, then lines 0 to 7 through `xb`, each to an RTS. With
+  `xt` at the sprite's top-left byte and `xb = xt + 504`, column k line j is at Y = 8k + j through either, so a
+  phase p runs the first from line 7 - p and the second from line 8 - p: two copies serve all 8 phases (1,647
+  bytes for the spores per phase, 452 as two). The entries come from `XtLo`/`XtHi`/`XbLo`/`XbHi` by the
+  sprite's `XcSlot` (in the first sprite table's page) and the phase. The dispatch is about 12 cycles more than
+  `XorRuns`' (no sprite pointer to set), so a 16-byte sprite with no zero bytes is no faster; the spores' odd
+  copy (24 bytes, 11 zero) goes from 432 cycles of XORing to 195.
+- `XorRuns`, `RunLo`/`RunHi`, `XEnt` and the 8-line set's data left the data bank: 15,428 → 13,892 bytes
+  (packed 4,499 → 4,233), about 1,980 free below DataVars. The compiled code and its tables (2,652 bytes) fill
+  main RAM's padding at `&259`-`&CB4` (75 bytes left before `&D00`); EXO2's packed code 215 → 1,072 bytes.
+  So 1,116 bytes more in all, for now in what was padding. `INPAGE` blocks (a high byte a sprite) were tried
+  and wasted about 940 bytes of padding; per-entry high bytes cost 4 cycles a call and no padding.
+- Every pass's screen as before in all 12 runs (self-erasing, all-XOR and hybrid, four zones). The hybrid:
+
+| Zone | Median | 90% | Worst | Passes over 40,000 |
+|---|---|---|---|---|
+| 0 | 6,776 → 6,461 | 18,441 → 15,681 | 48,629 → 48,367 | 1 → 1 |
+| 38 | 29,937 → 24,690 | 42,634 → 32,926 | 60,894 → 49,119 | 70 → 15 |
+| 94 | 32,355 → 27,983 | 58,686 → 54,308 | 79,604 → 75,306 | 122 → 85 |
+| 99 | 27,647 → 26,774 | 39,002 → 38,991 | 80,039 → 79,993 | 38 → 38 |
+
+- The worst passes left in 94 and 99 are a grenade's debris (95-100 XORs, 50 particles off and on) with the
+  spores; the debris is already compiled. Next: the behind-the-map draw chosen a cell at a time rather than a
+  band (by cell 22-52% of the draws' bytes are over a tile, by band 52-80%; stars alone 2-25%), and the bench's
+  decoding (about 70 cycles a command) brought nearer what the game's object loop will cost.

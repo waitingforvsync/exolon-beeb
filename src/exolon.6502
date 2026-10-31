@@ -40,6 +40,8 @@ SECTION Exo2, org = LoadFloor, load = &FFFF0000+LoadFloor, exec = &FFFF0000+entr
         PADTO BreakAddr
         EQUB 2                          ; clear memory on BREAK
 
+        INCLUDE "../build/gen/xor8code.6502"    ; the 8-line sprites compiled (sprites.6502's xor8)
+
         PADTO NmiOrg
         RTI                             ; stray NMIs
 .maincode_end

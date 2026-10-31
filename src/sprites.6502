@@ -509,20 +509,21 @@ ASSERT behindend - (StepsDrawBehind + 2) < 128 AND xorbehindend - (StepsXorBehin
     RTS
 }
 
-\\ An 8-line sprite XORed, on or off (D10): its own path, no general set-up. A sprite is one stored band (w <= 3
-\\ columns of 8 bytes; the set untrimmed at its top and left, so DX = DY = 0), at most two screen bands. Y runs
-\\ on from 0 over its 8w bytes in the sprite and the screen alike: step i (column i DIV 8, line i MOD 8) is in
-\\ the top band (xt, the sprite's top-left byte) if its line is under 8 - phase, else the bottom (xb = xt +
-\\ 504). So each phase has its own 24-step run, entered at step 8 (3 - w) and left by its RTS: no phase patch,
-\\ no exit patch, no realigning. Nothing is clipped (nor in the original): the logic keeps y at 168 or less.
+\\ An 8-line sprite XORed, on or off (D10): its own path, no general set-up. A sprite is one band (w <= 3 columns
+\\ of 8 lines; the set untrimmed at its top and left, so DX = DY = 0), at most two screen bands. With xt its
+\\ top-left byte on the screen and xb = xt + 504, its column k line j is at Y = 8k + j through xt in the top band
+\\ (j < 8 - phase), through xb below. Each sprite is compiled as two copies (gensprites' xor8_code, in main
+\\ RAM): its lines through xb from line 8 - phase, then through xt from line 7 - phase down, each to an RTS.
+\\ No phase patch, no exit patch, no realigning, and no zero byte touched. Nothing is clipped (nor in the
+\\ original): the logic keeps y at 168 or less.
 \\
 \\ Inputs:
-\\     X: the sprite (the 8-line set), A: its x, Y: its y
+\\     X: the sprite (the 8-line set, not the debris or the blank), A: its x, Y: its y
 \\
 \\ Outputs:
-\\     A, X, Y: corrupted
+\\     A, Y: corrupted; X: preserved
 
-ZA_AUTO2 xt, xb, xs                     ; xor8's: the top band's pointer, the bottom's, the sprite's
+ZA_AUTO2 xt, xb                         ; xor8's: the top band's pointer, the bottom's
 
 .xor8
 {
@@ -532,36 +533,19 @@ ZA_AUTO2 xt, xb, xs                     ; xor8's: the top band's pointer, the bo
     TYA:AND #7:TAY                      ; the phase
     ORA xt:STA xt                       ; the sprite's top-left byte
     SBC #7:STA xb                       ; (C clear: less 8) xt + 504
-    LDA xt+1:ADC #1:STA xb+1            ; (+ 2 less the borrow; C clear after)
-    LDA SprLo,X:STA xs
-    LDA SprHi,X:STA xs+1
-    LDA RunLo,Y:ADC XEnt-Sprite8,X:STA run+1
-    LDA RunHi,Y:ADC #0:STA run+2
-    LDY #0
-.run
-    JMP &FFFF                           ; self-modified: the phase's run at the width's step
-    ZA_CANJUMP XorRunList
+    LDA xt+1:ADC #1:STA xb+1            ; (+ 2 less the borrow)
+    TYA:ORA XcSlot-Sprite8,X:TAY        ; its copies' entries for the phase
+    LDA XbLo,Y:STA lower+1
+    LDA XbHi,Y:STA lower+2
+    LDA XtLo,Y:STA upper+1
+    LDA XtHi,Y:STA upper+2
+.lower
+    JSR &FFFF                           ; self-modified: the lines in the band below
+    ZA_CANCALL XcLowEntries
+.upper
+    JMP &FFFF                           ; self-modified: the lines in the top band (and back)
+    ZA_CANJUMP XcTopEntries
 }
-
-XorRunSize = 24 * 7 + 1
-.XorRuns
-FOR p = 0..7
-    FOR i = 0..23
-        IF (i MOD 8) < 8 - p
-            LDA (xs),Y:EOR (xt),Y:STA (xt),Y:INY
-        ELSE
-            LDA (xs),Y:EOR (xb),Y:STA (xb),Y:INY
-        ENDIF
-    NEXT
-    RTS
-NEXT
-ASSERT P% - XorRuns == 8 * XorRunSize, "xor8's runs"
-XorRunList = XorRuns + XorRunSize * (0..7)
-
-.RunLo
-    EQUB LO(XorRuns + XorRunSize * (0..7))
-.RunHi
-    EQUB HI(XorRuns + XorRunSize * (0..7))
 
     INPAGE 192
 .RowHi                                  ; a line's character row's page

@@ -6,8 +6,9 @@ on byte boundaries for each pixel shift, dithered to MODE 2, column by column.
 For now every sprite is kept raw in the data's bank, but for those OMITTED (blank, SprW 0): the suit's frames,
 the title's twinkles and the three never seen, none of which the plot logs draw. Packs unpacked between screens
 replace this (P5, P11). The six tables (SprW, SprH, SprDX, SprDY, SprLo, SprHi) are a page each, so no indexed
-read of them crosses a page, with whole sprites in the 98 bytes after each of the first five (layout()) and xor8's
-XEnt in the first.
+read of them crosses a page, with whole sprites in the 98 bytes after each of the first five (layout()). The 8-line
+set's data isn't kept: the debris is compiled for each even phase (debris_code), the rest as two copies each
+(xor8_code), in build/gen/xor8code.6502 for main RAM.
 
 A sprite is one shift of one frame, numbered:
 - 0-49: the 32-line set (the CPC's &93CD: the player's 24 frames facing right, then the popup), frame f's even
@@ -121,16 +122,15 @@ def debris_code(sp):
 
 
 def layout(sp):
-    """Where each sprite's data goes, as offsets from the tables' page: the six tables a page each (so no indexed
-    read crosses one), the 98 bytes after each of the first five filled with whole sprites (the 8-line set
-    first, so xor8's reads never cross a page either), the rest after the last table. Returns the offsets and
-    the gaps' sprites."""
+    """Where each large sprite's data goes, as offsets from the tables' page: the six tables a page each (so no
+    indexed read crosses one), the 98 bytes after each of the first five filled with whole sprites, the rest
+    after the last table. (The 8-line set is compiled: xor8_code.) Returns the offsets and the gaps' sprites."""
     n = len(sp)
-    order = sorted((i for i in range(n) if sp[i][4]), key=lambda i: (i < Sprite8First, -len(sp[i][4])))
+    order = sorted((i for i in range(Sprite8First) if sp[i][4]), key=lambda i: -len(sp[i][4]))
     offsets, gaps = [0] * n, []
     for g in range(5):
         room, pos, chosen = 256 - n, 256 * g + n, []
-        if g == 0:                                  # xor8's XEnt first (read at XEnt - Sprite8 + sprite)
+        if g == 0:                                  # xor8's XcSlot first (read at XcSlot - Sprite8 + sprite)
             room, pos = room - (n - Sprite8First), pos + n - Sprite8First
         for i in list(order):
             if len(sp[i][4]) <= room:
@@ -143,6 +143,58 @@ def layout(sp):
         offsets[i], pos = pos, pos + len(sp[i][4])
     blob = [i for i in sorted(order)]
     return offsets, gaps, blob
+
+
+def xc_names(sp):
+    """The 8-line sprites xor8_code compiles: all but the debris (frame 2) and the blank (frame 6)."""
+    return [s for s in range(Sprite8First, len(sp)) if sp[s][2] and s not in (Sprite8First + 4, Sprite8First + 5)]
+
+
+def xc_slot(sp):
+    """xor8's XcSlot: each 8-line sprite's compiled copies, their index in XtLo and the rest (in the first sprite
+    table's page, past offset 140, so XcSlot - Sprite8 indexes it in its page)."""
+    slot = {s: 8 * i for i, s in enumerate(xc_names(sp))}
+    return ['.XcSlot                                 ; xor8: an 8-line sprite\'s compiled copies, their index in XtLo...',
+            '    EQUB ' + ', '.join(str(slot.get(s, 0)) for s in range(Sprite8First, len(sp))),
+            'ASSERT HI(XcSlot - Sprite8) == HI(XcSlot + SpriteCount - Sprite8 - 1), "XcSlot read in its page"']
+
+
+def xor8_code(sp):
+    """The 8-line sprites but the debris and the blank, compiled for xor8: XOR immediates, zero bytes left out.
+    With xt at the sprite's top-left byte on the screen and xb = xt + 504 (the cell row below, 8 lines back),
+    the sprite's column k line j is at Y = 8k + j through xt if its screen line is in the top band (j < 8 -
+    phase), else through xb. So each sprite has two copies: lines 7 to 0 through xt, then lines 0 to 7 through
+    xb, each to an RTS; a phase p runs the first from line 7 - p (XtLo, XtHi) and the second from line 8 - p
+    (XbLo, XbHi)."""
+    names = xc_names(sp)
+    out = ["\\\\ xor8code.6502 - made by tools/gensprites.py: the 8-line sprites but the debris and the blank,",
+           "\\\\ compiled for sprites.6502's xor8 (gensprites' xor8_code says how).", ""]
+    tents, bents = [], []
+    for s in names:
+        dx, dy, w, h, d = sp[s]
+        b = [(k, j, d[8 * k + j]) for k in range(w) for j in range(8) if d[8 * k + j]]
+        top = sorted(b, key=lambda e: (-e[1], e[0]))
+        low = sorted(b, key=lambda e: (e[1], e[0]))
+        out += [f'.xc{s}']
+        out += [f'    LDY #{8 * k + j}:LDA (xt),Y:EOR #&{v:02X}:STA (xt),Y' for k, j, v in top]
+        out += ['    RTS', f'.xc{s}b']
+        out += [f'    LDY #{8 * k + j}:LDA (xb),Y:EOR #&{v:02X}:STA (xb),Y' for k, j, v in low]
+        out += ['    RTS']
+        for p in range(8):
+            t = f'xc{s} + {8 * sum(1 for e in b if e[1] > 7 - p)}'
+            lw = f'xc{s}b + {8 * sum(1 for e in b if e[1] < 8 - p)}'
+            tents.append(t); bents.append(lw)
+    out += ['', 'XcTopEntries = {' + ', '.join(tents) + '}',
+            'XcLowEntries = {' + ', '.join(bents) + '}',
+            '.XtLo                                   ; the top band\'s entry for each phase',
+            '    EQUB LO(XcTopEntries)',
+            '.XtHi',
+            '    EQUB HI(XcTopEntries)',
+            '.XbLo                                   ; the band below\'s',
+            '    EQUB LO(XcLowEntries)',
+            '.XbHi',
+            '    EQUB HI(XcLowEntries)', '']
+    return out
 
 
 def main(out):
@@ -167,9 +219,7 @@ def main(out):
     for t, (label, vals) in enumerate(tables):
         lines += [f'.{label}', *['    EQUB ' + ', '.join(str(v) for v in vals[i:i + 10]) for i in range(0, n, 10)]]
         if t == 0:
-            lines += ['.XEnt                                   ; xor8: an 8-line sprite\'s step in its run, 8 × (3 - w) steps of 7 bytes',
-                      '    EQUB ' + ', '.join(str(56 * (3 - s[2])) for s in sp[Sprite8First:]),
-                      'ASSERT HI(XEnt - Sprite8) == HI(XEnt + SpriteCount - Sprite8 - 1), "XEnt read in its page"']
+            lines += xc_slot(sp)
             used += n - Sprite8First
         if t < len(gaps):
             data = b''.join(sp[i][4] for i in gaps[t])
@@ -183,7 +233,9 @@ def main(out):
     lines += debris_code(sp)
     with open(os.path.join(out, 'sprites.6502'), 'w') as f:
         f.write('\n'.join(lines))
-    total = sum(len(s[4]) for s in sp)
+    with open(os.path.join(out, 'xor8code.6502'), 'w') as f:
+        f.write('\n'.join(xor8_code(sp)))
+    total = sum(len(s[4]) for s in sp[:Sprite8First])
     print(f'{n} sprites, {total} bytes of data ({used} in the tables\' pages, {5 * (256 - n) - used} spare there)')
 
 
