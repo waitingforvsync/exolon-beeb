@@ -189,3 +189,8 @@ O7-O14 (`docs/decisions.md`).
   included (so `rand` is right too).
 - Too slow: `zone_enter` 599-647 ms against the CPC's 190-273 (unpacking 440 of it). P13 for Rich.
 - The loader clears the status rows (the OS's MODE 7 screen was there).
+- D33: the scripts raw (1,699 bytes), the placement lists packed a stage a block (5 blocks, 3,274), the tiles a
+  set a block (21 blocks, 3,950; the 9 fixed tiles raw). A zone change unpacks its stage's lists and the sets
+  its tiles are from (each local tile notes its set). The drawing stores zeros for blank cells.
+- `tools/check_zones.mjs`: 125 of 125 zones byte-exact; `zone_enter` 182-337 ms, median 244 (was 599-647, 620;
+  the CPC's 190-273, 230). The code's bank: 10,682 bytes (9,007 packed on the disc).

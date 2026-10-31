@@ -1,15 +1,16 @@
-\\ zone.6502 - a zone set up between screens (P8, D12, D21): its placements' scripts run into the tile map and the
-\\ cell map, its tiles copied out to the workspace, and the playfield drawn from them, with the display off.
-\\ In the code's bank, with the zones' data and the tiles, both packed. The spec is docs/cpc-zones.md.
+\\ zone.6502 - a zone set up between screens (P8, D12, D21, D33): its placements' scripts run into the tile map and
+\\ the cell map, its tiles copied out to the workspace, and the playfield drawn from them, with the display off.
+\\ In the code's bank, with the scripts raw and the placement lists and tiles packed in small blocks: a zone
+\\ change unpacks its stage's lists and its tiles' sets. The spec is docs/cpc-zones.md.
 
 INCLUDE "../build/gen/tiles.6502"       ; the global tile numbers the code needs (tools/genzones.py)
 
 MaxTiles = 196                          ; a zone's tiles: 160 at most from its scripts, 9 fixed, 26 animated
 MaxDepth = 4                            ; loops and sub-scripts open at once (2 at most in the scripts)
 Unassigned = &FF                        ; in GlobalToLocal: no local number yet
-ZoneDataOrg = ScreenAddr                ; where the zones' data unpacks, then the tiles
-TilesOrg = ScreenAddr
-ASSERT TileCount * 16 <= &8000 - TilesOrg, "the tiles unpack within the screen"
+ListBufOrg = ScreenAddr                 ; where a stage's placement lists unpack, then each tile set in turn
+TilesBufOrg = ScreenAddr
+StageZones = 25                         ; a block of placement lists (tools/genzones.py's)
 ASSERT MaxTiles < Unassigned, "a local tile number is a byte, short of Unassigned"
 ASSERT TileStar == 1 AND TileBarrier == 8 AND TileBlank == 0, "tiles 0-8: the blank, the stars by pen, the barrier"
 
@@ -38,6 +39,10 @@ SECTION Workspace
     SKIP MaxDepth
 .FrameCol
     SKIP MaxDepth
+.SetNeeded                              ; non-zero: a set the zone has tiles from
+    SKIP SetCount
+.LocalSet                               ; a local tile's set
+    SKIP MaxTiles
     ALIGN &100
 .LocalTiles                             ; the zone's tiles, 16 bytes each in the screen's order for a cell
     SKIP MaxTiles * 16
@@ -49,7 +54,8 @@ ASSERT CellMap == TileMap + &300, "the cell map 3 pages after the tile map: one 
 ZA_AUTO2 script                         ; the script running
 ZA_AUTO1 offset                         ; the next byte's offset in it (every script is under 256 bytes)
 ZA_AUTO1 penrow, pencol                 ; where the next block goes (the Z80's D and E)
-ZA_AUTO2 setbase                        ; the block set's first global tile (&E6)
+ZA_AUTO2 setbase                        ; the block set's first global tile
+ZA_AUTO1 curset                         ; and its number (&E6)
 ZA_AUTO1 cellval                        ; what each block makes its cell (the CPC's &3BD5, &E8)
 ZA_AUTO1 depth                          ; loops and sub-scripts open
 ZA_AUTO2 gid                            ; a global tile
@@ -79,12 +85,15 @@ ZA_AUTO1 barrierrow, barriercol         ; the barrier's emitter (row &FF: none)
     LDA #R8Off:STA &FE01                ; the display off: the screen's a buffer until it's drawn
     TXA:ASL A:STA zone2
 
-    \\ the zones' data unpacked into the screen, and the zone's placements found
+    \\ the zone's stage's placement lists unpacked into the screen, and the zone's list found
 
-    LDA #LO(zones_packed):STA zunpack.src
-    LDA #HI(zones_packed):STA zunpack.src+1
-    LDA #LO(ZoneDataOrg):STA zunpack.dst
-    LDA #HI(ZoneDataOrg):STA zunpack.dst+1
+    TXA:LDY #&FE
+.stage
+    INY:INY:SEC:SBC #StageZones:BCS stage   ; Y: 2 × the stage
+    LDA ZdStages,Y:STA zunpack.src
+    LDA ZdStages+1,Y:STA zunpack.src+1
+    LDA #LO(ListBufOrg):STA zunpack.dst
+    LDA #HI(ListBufOrg):STA zunpack.dst+1
     JSR zunpack.unpack
     LDY zone2
     LDA ZdZones,Y:STA list
@@ -101,11 +110,19 @@ ZA_AUTO1 barrierrow, barriercol         ; the barrier's emitter (row &FF: none)
     LDA #Unassigned
     STA GlobalToLocal,X:STA GlobalToLocal+&100,X
     INX:BNE clear
+    LDX #SetCount-1
+.sets
+    STA SetNeeded,X                     ; (A = Unassigned: overwritten with 0 below for set 0 up)
+    DEX:BPL sets
     LDX #TileBarrier
 .fixed
     TXA:STA GlobalToLocal,X:STA LocalToGlobalLo,X
-    LDA #0:STA LocalToGlobalHi,X
+    LDA #0:STA LocalToGlobalHi,X:STA LocalSet,X
     DEX:BPL fixed
+    LDX #SetCount-1
+.unneeded
+    STA SetNeeded,X                     ; (A = 0)
+    DEX:BPL unneeded
     LDA #TileBarrier+1:STA freetile
 
     JSR stars
@@ -132,13 +149,8 @@ ZA_AUTO1 barrierrow, barriercol         ; the barrier's emitter (row &FF: none)
     JSR special_cells
     JSR barrier
 
-    \\ the tiles unpacked into the screen, and the zone's copied out
+    \\ the zone's tiles copied out, its sets unpacked into the screen one by one
 
-    LDA #LO(tiles_packed):STA zunpack.src
-    LDA #HI(tiles_packed):STA zunpack.src+1
-    LDA #LO(TilesOrg):STA zunpack.dst
-    LDA #HI(TilesOrg):STA zunpack.dst+1
-    JSR zunpack.unpack
     JSR copy_tiles
 
     \\ the playfield drawn and shown
@@ -328,9 +340,10 @@ ZA_AUTO1 barrierrow, barriercol         ; the barrier's emitter (row &FF: none)
     DEC repeats:BNE downone
     JMP next
 
-.setbase_op                             ; &E6 lo hi: the block set's first global tile
-    JSR fetch:STA setbase
-    JSR fetch:STA setbase+1
+.setbase_op                             ; &E6 n: block set n
+    JSR fetch:STA curset:TAX
+    LDA SetBaseLo,X:STA setbase
+    LDA SetBaseHi,X:STA setbase+1
     JMP next
 
 .blank                                  ; &E7: the blank (the CPC's font space) at the pen; the pen one on
@@ -431,9 +444,11 @@ ZA_AUTO1 repeats                        ; &E4 and &E5's count
 \\
 \\ Inputs:
 \\     gid: the global tile
+\\     curset: its set
 \\
 \\ Outputs:
 \\     A: its local number
+\\     LocalSet, SetNeeded: its set's, if it's given one now
 \\     X, Y: corrupted
 
 .local_tile
@@ -451,6 +466,8 @@ ZA_AUTO1 repeats                        ; &E4 and &E5's count
     TAY
     TXA:STA LocalToGlobalLo,Y
     LDA gid+1:STA LocalToGlobalHi,Y
+    LDA curset:STA LocalSet,Y:TAX
+    STA SetNeeded,X                     ; (non-zero: the fixed set 0 never gives)
     TYA
     INC freetile
 .got
@@ -495,11 +512,14 @@ ZA_AUTO1 repeats                        ; &E4 and &E5's count
 
     \\ the animations' tiles: the flames, the guns' muzzles, the burning mine
 
+    LDA #SetFlames:STA curset
     LSR anims:BCC noflames
     LDA #LO(TileFlames):LDX #6:JSR give_tiles
 .noflames
     LSR anims:BCC noguns
+    LDA #SetMuzzles:STA curset
     LDA #LO(TileMuzzles):LDX #16:JSR give_tiles
+    LDA #SetFlames:STA curset
 .noguns
     LSR anims:BCC nomines
     LDA #LO(TileMine):LDX #4:JSR give_tiles
@@ -518,6 +538,7 @@ ASSERT HI(TileFlames) == 0 AND HI(TileMuzzles + 15) == 0 AND HI(TileMine + 3) ==
 \\ Inputs:
 \\     A: the first global tile (under 256)
 \\     X: how many
+\\     curset: their set
 \\
 \\ Outputs:
 \\     GlobalToLocal, LocalToGlobal: theirs
@@ -566,25 +587,47 @@ ASSERT HI(TileFlames) == 0 AND HI(TileMuzzles + 15) == 0 AND HI(TileMine + 3) ==
     RTS
 }
 
-\\ The zone's tiles from the unpacked set (at TilesOrg, 16 bytes a global tile) to LocalTiles.
+\\ The zone's tiles to LocalTiles: the fixed ones (0-8) from FixedTiles, then each set the zone has tiles from,
+\\ unpacked into the screen in turn, its tiles copied from there.
 \\
 \\ Inputs:
-\\     LocalToGlobalLo, LocalToGlobalHi: the zone's tiles, to freetile
+\\     LocalToGlobalLo, LocalToGlobalHi, LocalSet: the zone's tiles, to freetile
+\\     SetNeeded: the sets they're from
 \\
 \\ Outputs:
 \\     LocalTiles: theirs
+\\     curset: corrupted
 \\     A, X, Y: corrupted
 
 .copy_tiles
 {
     ZA_AUTO2 from, to                   ; local: a tile in the set, and its place in LocalTiles
 
-    LDX #0
+    LDX #TileBarrier*16+15
+.fixed
+    LDA FixedTiles,X:STA LocalTiles,X
+    DEX:CPX #&FF:BNE fixed
+    LDA #1:STA curset
+.set
+    LDX curset
+    LDA SetNeeded,X:BEQ nextset
+    LDA TileSetLo,X:STA zunpack.src
+    LDA TileSetHi,X:STA zunpack.src+1
+    LDA #LO(TilesBufOrg):STA zunpack.dst
+    LDA #HI(TilesBufOrg):STA zunpack.dst+1
+    JSR zunpack.unpack
+
+    \\ the set's tiles: from TilesBufOrg + 16 × (the global tile - the set's first)
+
+    LDX #TileBarrier+1
 .tile
-    LDA LocalToGlobalLo,X:LSR A:LSR A:LSR A:LSR A:STA from+1
-    LDA LocalToGlobalHi,X:ASL A:ASL A:ASL A:ASL A
-    ORA from+1:CLC:ADC #HI(TilesOrg):STA from+1 ; the global tile × 16, high byte
-    LDA LocalToGlobalLo,X:ASL A:ASL A:ASL A:ASL A:STA from
+    LDA LocalSet,X:CMP curset:BNE othertile
+    LDY curset
+    LDA LocalToGlobalLo,X:SEC:SBC SetBaseLo,Y   ; (under 64: a set's tiles)
+    STA from+1
+    ASL A:ASL A:ASL A:ASL A:STA from
+    LDA from+1:LSR A:LSR A:LSR A:LSR A
+    CLC:ADC #HI(TilesBufOrg):STA from+1
     TXA:ASL A:ASL A:ASL A:ASL A:STA to
     TXA:LSR A:LSR A:LSR A:LSR A
     CLC:ADC #HI(LocalTiles):STA to+1
@@ -592,10 +635,14 @@ ASSERT HI(TileFlames) == 0 AND HI(TileMuzzles + 15) == 0 AND HI(TileMine + 3) ==
 .byte
     LDA (from),Y:STA (to),Y
     DEY:BPL byte
+.othertile
     INX:CPX freetile:BNE tile
+.nextset
+    INC curset
+    LDA curset:CMP #SetCount:BNE set
     RTS
 }
-ASSERT LO(TilesOrg) == 0 AND LO(LocalTiles) == 0, "the tile sets on page boundaries"
+ASSERT LO(TilesBufOrg) == 0 AND LO(LocalTiles) == 0, "the tile buffers on page boundaries"
 
 \\ The playfield drawn from the tile map, every cell (the blank too, so nothing needs clearing first). A cell's 16
 \\ bytes are consecutive on the screen and in its tile, and the cells run in the screen's order: cell n at
@@ -618,7 +665,8 @@ ASSERT LO(TilesOrg) == 0 AND LO(LocalTiles) == 0, "the tile sets on page boundar
     LDA #HI(TileMap):STA map+1
     LDY #0
 .cell
-    LDA (map),Y:TAX
+    LDA (map),Y:BEQ blank
+    TAX
     ASL A:ASL A:ASL A:ASL A:STA from
     TXA:LSR A:LSR A:LSR A:LSR A
     CLC:ADC #HI(LocalTiles):STA from+1
@@ -627,6 +675,14 @@ ASSERT LO(TilesOrg) == 0 AND LO(LocalTiles) == 0, "the tile sets on page boundar
     LDA (from),Y:STA (to),Y
     DEY:BPL byte
     INY                                 ; (Y = 0)
+    BEQ drawn                           ; (always)
+.blank
+    LDY #15                             ; (A = 0)
+.zero
+    STA (to),Y
+    DEY:BPL zero
+    INY                                 ; (Y = 0)
+.drawn
     INC map:BNE @+
     INC map+1
 .@
@@ -645,13 +701,8 @@ ASSERT StatusAddr - ScreenAddr == PlayRows * 32 * 16, "the playfield is its cell
     INCLUDE "dzx02.6502"
 }
 
-\\ The zones' data and the tiles, each packed to unpack into the screen (D21)
+\\ The scripts raw; the placement lists a stage a block, and the tiles a set a block, packed (D33)
 
-.zones_packed
-SECTION ZoneData, org = ZoneDataOrg, transform = "zx02"
-    INCLUDE "../build/gen/zones.6502"
-ENDSECTION
-.tiles_packed
-SECTION TileData, org = TilesOrg, transform = "zx02"
-    INCBIN "../build/gen/tiles.bin"
-ENDSECTION
+INCLUDE "../build/gen/scripts.6502"
+INCLUDE "../build/gen/lists.6502"
+INCLUDE "../build/gen/tilesets.6502"

@@ -1,24 +1,27 @@
-"""The zones for the BBC (P8, D12, D21): the placement lists and object scripts as Baron source, and every tile
-dithered to MODE 2.
+"""The zones for the BBC (P8, D12, D21, D33): the object scripts and the placement lists as Baron source, and every
+tile dithered to MODE 2, packed in small blocks so a zone change unpacks only what the zone needs.
 
-    .venv/bin/python tools/genzones.py build/gen            # writes zones.6502, tiles.bin, tiles.6502
+    .venv/bin/python tools/genzones.py build/gen            # writes the files below
     .venv/bin/python tools/genzones.py build/gen --check    # and checks the BBC's form against zonemodel
     .venv/bin/python tools/genzones.py build/gen --expect   # and writes every zone's playfield as the BBC
                                                             # should draw it (zones-expected.bin), for
                                                             # tools/check_zones.mjs
 
-zones.6502 is the zones' data, to be assembled into a section that runs where it's unpacked: the zone table
-(ZdZones, a word a zone), the placement lists (row, column, object; &FF ends), the script table (ZdScripts, a
-word an object) and the scripts. The scripts keep the CPC's bytecodes (docs/cpc-zones.md) but for three
-changes: the Spectrum's attribute codes (&CF-&DE, &E0 n) are dropped, as they do nothing; &E3's operand is a
-label; and &E6's operand is the block set's first global tile number, not its CPC address.
+- scripts.6502, raw in the code's bank: the script table (ZdScripts, a word an object) and the scripts. They keep
+  the CPC's bytecodes (docs/cpc-zones.md) but for three changes: the Spectrum's attribute codes (&CF-&DE, &E0 n)
+  are dropped, as they do nothing; &E3's operand is a label; and &E6's operand is one byte, the block set's
+  number (1-21; 0 is the fixed tiles), not its CPC address.
+- lists.6502: the placement lists (row, column, object; &FF ends) in five blocks, a stage of 25 zones each, each
+  packed to unpack at ListBufOrg; ZdZones, each zone's list there; ZdStages, each stage's packed block.
+- tilesets.6502: the fixed tiles raw (FixedTiles: global 0-8), each block set packed (TileSetLo/Hi), each set's
+  first global tile (SetBaseLo/Hi). tiles.6502: the constants the code needs. tiles.bin: every tile, in order.
 
 Global tile numbers (9 bits): 0 the blank (the font's space), 1-7 a star in pen 1-7, 8 the barrier, then the
 21 block sets whole, in the order below (so the animations' blocks are in: the flames, the burning mine, the
-guns' muzzles). tiles.bin is 16 bytes a tile in that order, in the screen's own order for a cell: the left
-byte's 8 lines, then the right byte's. Each pixel is its pen's BBC colour, or its pair's by the pixel's place on
-the screen (x + y even: the darker); a pixel of any pen but 0 has bit 3 set (logical 8-15: the palette makes
-them 0-7 again), so sprites go behind it (P10, D31).
+guns' muzzles). A tile is 16 bytes in the screen's own order for a cell: the left byte's 8 lines, then the
+right byte's. Each pixel is its pen's BBC colour, or its pair's by the pixel's place on the screen (x + y even:
+the darker); a pixel of any pen but 0 has bit 3 set (logical 8-15: the palette makes them 0-7 again), so sprites
+go behind it (P10, D31).
 """
 import os
 import sys
@@ -106,33 +109,74 @@ def label(a):
     return f'ZdS{a:04X}'
 
 
-def emit_source(m, path):
-    bases, _ = set_bases()
+def set_index():
+    return {addr: k + 1 for k, (addr, _) in enumerate(SETS)}
+
+
+def emit_scripts(m, path):
+    idx = set_index()
     done, table = scripts(m)
-    zs = zones(m)
-    lines = ['\\\\ zones.6502 - made by tools/genzones.py from docs/exolon.dsk: the zones and their object scripts',
-             '\\\\ (P8). Assembled into a section that runs where it is unpacked.', '',
-             '.ZdZones                                ; zone n\'s placements',
-             '    EQUW ' + ', '.join(f'ZdZ{z}' for z in range(125)),
+    lines = ['\\\\ scripts.6502 - made by tools/genzones.py from docs/exolon.dsk: the object scripts (P8), raw.', '',
              '.ZdScripts                              ; object n\'s script',
              '    EQUW ' + ', '.join(label(a) for a in table)]
-    for z, lst in enumerate(zs):
-        lines.append(f'.ZdZ{z}')
-        lines.append('    EQUB ' + ', '.join(f'{r}, {c}, {o}' for r, c, o in lst) + (', ' if lst else '') + '&FF')
     for a in sorted(done):
         bs = []
         for op, args in done[a]:
             if op == 0xE3:
                 bs.append(f'&E3, LO({label(args[0])}), HI({label(args[0])})')
             elif op == 0xE6:
-                g = bases[args[0]]
-                bs.append(f'&E6, {g & 255}, {g >> 8}')
+                bs.append(f'&E6, {idx[args[0]]}')
             else:
                 bs.append(', '.join(f'&{x:02X}' for x in (op,) + args))
+        assert sum(b.count(',') + 1 for b in bs) < 256, f'script &{a:04X}: 256 bytes or more'
         lines.append(f'.{label(a)}')
         for i in range(0, len(bs), 12):
             lines.append('    EQUB ' + ', '.join(bs[i:i + 12]))
     with open(path, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+
+
+def emit_lists(m, path, stage=25):
+    zs = zones(m)
+    lines = ['\\\\ lists.6502 - made by tools/genzones.py from docs/exolon.dsk: the zones\' placement lists (P8, D33),',
+             '\\\\ a block a stage, each packed to unpack at ListBufOrg.', '',
+             '.ZdZones                                ; zone n\'s list, unpacked',
+             '    EQUW ' + ', '.join(f'ZdZ{z}' for z in range(125)),
+             '.ZdStages                               ; each stage\'s block, packed',
+             '    EQUW ' + ', '.join(f'ZdStage{k}' for k in range((125 + stage - 1) // stage))]
+    for k in range(0, 125, stage):
+        lines += [f'.ZdStage{k // stage}', f'SECTION ZdStage{k // stage}Data, org = ListBufOrg, transform = "zx02"']
+        for z in range(k, min(k + stage, 125)):
+            lst = zs[z]
+            lines.append(f'.ZdZ{z}')
+            lines.append('    EQUB ' + ', '.join(f'{r}, {c}, {o}' for r, c, o in lst) + (', ' if lst else '') + '&FF')
+        lines.append('ENDSECTION')
+    with open(path, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+
+
+def emit_tilesets(tl, out):
+    bases, n = set_bases()
+    with open(os.path.join(out, 'fixedtiles.bin'), 'wb') as f:
+        f.write(b''.join(tl[:FIRST_SET_GID]))
+    lines = ['\\\\ tilesets.6502 - made by tools/genzones.py: the fixed tiles raw, each block set packed (D33).', '',
+             '.FixedTiles                             ; global tiles 0-8: the blank, the stars, the barrier',
+             '    INCBIN "fixedtiles.bin"',
+             '.SetBaseLo                              ; each set\'s first global tile (set 0: the fixed tiles)',
+             '    EQUB 0, ' + ', '.join(f'LO({bases[a]})' for a, _ in SETS),
+             '.SetBaseHi',
+             '    EQUB 0, ' + ', '.join(f'HI({bases[a]})' for a, _ in SETS),
+             '.TileSetLo                              ; each set\'s packed block (set 0: none, the fixed tiles are raw)',
+             '    EQUB 0, ' + ', '.join(f'LO(TileSet{k + 1})' for k in range(len(SETS))),
+             '.TileSetHi',
+             '    EQUB 0, ' + ', '.join(f'HI(TileSet{k + 1})' for k in range(len(SETS)))]
+    for k, (a, size) in enumerate(SETS):
+        g = bases[a]
+        with open(os.path.join(out, f'tileset{k + 1}.bin'), 'wb') as f:
+            f.write(b''.join(tl[g:g + size]))
+        lines += [f'.TileSet{k + 1}', f'SECTION TileSet{k + 1}Data, org = TilesBufOrg, transform = "zx02"',
+                  f'    INCBIN "tileset{k + 1}.bin"', 'ENDSECTION']
+    with open(os.path.join(out, 'tilesets.6502'), 'w') as f:
         f.write('\n'.join(lines) + '\n')
 
 
@@ -284,18 +328,24 @@ def main(out, do_check=False):
     m = initial_memory()
     pairs = gendata.pairs(read_dsk(gendata.DSK))
     os.makedirs(out, exist_ok=True)
-    emit_source(m, os.path.join(out, 'zones.6502'))
+    emit_scripts(m, os.path.join(out, 'scripts.6502'))
+    emit_lists(m, os.path.join(out, 'lists.6502'))
     tl = tiles(m, pairs)
     with open(os.path.join(out, 'tiles.bin'), 'wb') as f:
         f.write(b''.join(tl))
+    emit_tilesets(tl, out)
     bases, n = set_bases()
+    idx = set_index()
     with open(os.path.join(out, 'tiles.6502'), 'w') as f:
-        f.write('\\\\ tiles.6502 - made by tools/genzones.py: the global tile numbers the code needs\n\n'
+        f.write('\\\\ tiles.6502 - made by tools/genzones.py: the tiles\' and sets\' numbers the code needs\n\n'
                 f'TileCount = {n}\nTileBlank = 0\nTileStar = 1                            ; 1-7: a star in pen 1-7\n'
                 'TileBarrier = 8\n'
                 f'TileFlames = {bases[0x6F8D] + 21}                         ; 6: the thruster flames\n'
                 f'TileMine = {bases[0x6F8D] + 29}                           ; 4: the burning mine\n'
-                f'TileMuzzles = {bases[0x758D] + 16}                        ; 16: the guns\' muzzles\n')
+                f'TileMuzzles = {bases[0x758D] + 16}                        ; 16: the guns\' muzzles\n'
+                f'SetCount = {len(SETS) + 1}                            ; the fixed tiles, then the 21 sets\n'
+                f'SetFlames = {idx[0x6F8D]}                            ; the set the flames and the mine are in\n'
+                f'SetMuzzles = {idx[0x758D]}                           ; and the muzzles\n')
     if '--expect' in sys.argv:
         expected(m, pairs, os.path.join(out, 'zones-expected.bin'))
     if do_check:
