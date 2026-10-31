@@ -128,6 +128,16 @@ Rich: "we shouldn't assume A=0 on entry. can we assume that?"
   that's the MOS's code, unchecked on MOS 3.20 and OS 2.00, for 2 cycles and 2 bytes: the handler clears A
   itself (`LDA #0`), as Portal's does.
 
+### D24. The Spectrum original as a second reference for the mechanics (2026-10-31)
+Rich: "I have just put a .tzx file of the original spectrum version at docs/Exolon.tzx. Can you cross-reference
+against this when writing game mechanics to keep it faithful to both."
+- The tape loads (SkoolKit's simulated LOAD, through the Hewson loader) to the game at `&6D60`-`&FFFF`;
+  `tools/spectrum.py` runs it, and `tools/cpc2spec.py` maps 111 CPC routines to their Spectrum twins. The two
+  main loops make the same calls in the same order; the Spectrum's adds a fixed delay each pass.
+- Uncontended, the Spectrum makes about 25 passes a second (a median 1.90 frames a pass), against the CPC's
+  20.9: D8's 25 is close to the original's own pace.
+- Where the two differ in anything that affects play, the specs give both and Rich chooses.
+
 ---
 
 ## Proposed
@@ -216,4 +226,9 @@ counted with Teddy Boy's `zx02.py`):
 
 ## Open
 
-(None at present.)
+### O6. An experiment, later: the Spectrum's graphics in MODE 1 with raster colour splits (2026-10-31)
+Rich: "Possibly I would like to try Spectrum type graphics in Mode 1 with raster colour splits as a possible
+experiment later on."
+- MODE 1 at the same R1 = 64 is 256 pixels across, the Spectrum's own width, in the same 12K screen and the same
+  CRTC set-up: only the ULA's control register and the graphics change. Four colours a line against the
+  Spectrum's two a character cell, with the palette split per character row (or finer) for its colours.

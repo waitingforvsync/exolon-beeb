@@ -99,3 +99,21 @@ What's been done, newest last, with measurements. Decisions are in `docs/decisio
   frames); X and `:` for 20 frames each moved the marker (31, 80) → (41, 60); the stack's sentinel intact.
 - The IRQ clears A itself (D23), as Portal's does, rather than rely on the MOS's entry leaving it 0: still 148
   cycles to its RTI. Unrolling only for the hot loops (D22).
+
+### The Spectrum original (D24)
+- `docs/Exolon.tzx` (Rich's, git-ignored): SkoolKit's `tap2sna.py` loads it through the Hewson loader, run on
+  to the game's entry with `--start 0x6D60 -c finish-tape=1` (without them the simulation stops in the
+  loader's edge loop at `&FD29` when the tape ends; with a 240 s limit it stopped part-way).
+- `tools/spectrum.py` runs it (48K ROM from SkoolKit, IM 1 interrupt every 69,888 T, keyboard on `&FE`): the
+  title, then '1' to play.
+- Main loop `&75BE`-`&7689` (found as the run of 22 CALLs at `&7623`): the CPC's calls in order plus
+  `LD BC,&01F4 : CALL &B0B7`, a fixed delay. Pass counters `&768C`, `&768D`, `&AC7B`; random generator `&AD36`
+  (the CPC's code byte for byte).
+- 600 passes of random play, uncontended: a pass median 132,546 T (1.90 frames), mean 2.00 frames, 24.9
+  passes a second; 90% 154,159 T, max 291,147 T.
+- `tools/cpc2spec.py`: 111 of the CPC's 173 routine starts have a single Spectrum twin (the two loops' calls
+  aligned by `difflib` on their callees' code, the rest by signature with addresses and branch displacements
+  masked). Compared over each CPC routine's length, 5 constants differ before the code diverges, 4 of them
+  `&DD`/`&E0` (a table's address byte). Most twins diverge at platform code (screen, colour), so mechanics
+  are compared by reading.
+- Phase 1's agents B and C were told to cross-reference their mechanics against it.

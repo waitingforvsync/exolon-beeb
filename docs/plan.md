@@ -108,6 +108,22 @@ passes of random play with the game's keys (walking, jumping, firing, turning, d
 | of which the zones' placement lists | 4,055 | 2,500 |
 | `&6649`-`&B1CC`: data (`EXOLON.2`, `EXOLON.3` and the end of `EXOLON.1`) | 19,332 | 6,969 |
 
+## The Spectrum original (D24)
+
+The CPC version was ported from it: a Spectrum keyboard read survives in the CPC code, and the two main loops
+make the same calls in the same order. Measured 2026-10-31 from `docs/Exolon.tzx` (git-ignored):
+- The tape ("Hewson II" loader) loads through SkoolKit's simulated LOAD to `build/spec/exolon.z80`: the loader
+  decrypts itself, loads a 4K block (the loading screen's countdown) and the 37,538-byte game, moves it up to
+  `&6D60`-`&FFFF`, sets SP = `&6D5E`, `EI`, `JP &6D60`.
+- `tools/spectrum.py` runs it: the 48K ROM, an interrupt a frame, the keyboard. The title offers keyboard,
+  Interface 2 or Kempston.
+- Its main loop is `&75BE`-`&7689`: the CPC's calls in the CPC's order, plus a fixed delay each pass
+  (`&B0B7`: an LDIR of 500 bytes, ROM onto ROM, about 10,500 T), and the same padding (`&9E85`, `&9E99`).
+- Uncontended, a pass takes a median 1.90 frames, about 25 passes a second over 600 passes of play. Contended
+  memory would slow it somewhat. The CPC averages 20.9, so the BBC's 25 (D8) is about the original's pace.
+- `tools/cpc2spec.py` maps 111 CPC routines to their Spectrum twins and lists the constants that differ: the
+  mechanics are compared routine by routine in the specs, and any difference that affects play goes to Rich.
+
 ## The BBC version
 
 ### Display (D9)
