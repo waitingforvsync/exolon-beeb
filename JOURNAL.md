@@ -449,3 +449,9 @@ Plotting alone (the bench's decoding off), cycles a pass, the hybrid's commands 
   **800 passes of random keys, 0 differ**. With fire, the first 220 match and then the CPC's grenade has
   destroyed scenery the BBC still has.
 - Not yet: his frames facing left (D29's mirroring), the status rows, and everything else.
+
+### Where it stands (2026-11-01)
+- Done and committed: the plotter and its driver (`plot_pass`, beam waiting); the player's movement in
+  lockstep with the CPC (800 passes), facing either way (frames mirrored in place); zone exits; the status rows.
+- Not done: the laser, grenades, debris, every enemy and object kind, death and lives, the title, sound.
+- The autonomous feature work was stopped here, without a release; the conversation has why.
