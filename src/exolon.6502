@@ -35,8 +35,6 @@ SECTION Exo2, org = LoadFloor, load = &FFFF0000+LoadFloor, exec = &FFFF0000+entr
         PADTO Irq1vAddr
         EQUW irq                        ; IRQ1V
 
-        INCLUDE "game.6502"             ; the main loop (for now the zone viewer)
-
         PADTO BreakAddr
         EQUB 2                          ; clear memory on BREAK
 
@@ -45,6 +43,8 @@ SECTION Exo2, org = LoadFloor, load = &FFFF0000+LoadFloor, exec = &FFFF0000+entr
         PADTO NmiOrg
         RTI                             ; stray NMIs
 
+        INCLUDE "game.6502"             ; the main loop: the game (or the bench, or the zone viewer)
+        INCLUDE "player.6502"           ; the player
         IF DEFINED(BENCH)
             INCLUDE "bench.6502"        ; the plotter timed over the original's plots (paging the data's bank)
         ENDIF

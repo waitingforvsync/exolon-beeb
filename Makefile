@@ -49,6 +49,12 @@ bench: $(BUILD)/bench.ssd
 $(BUILD)/bench.ssd: $(DEPS) | $(BUILD)
 	$(BARON) -v -D BENCH=TRUE --symbols $(BUILD)/bench.json -o $@ --title BENCH --opt 2 $(SRC) > $(BUILD)/bench.lst
 
+# the zone viewer: Z and X step through the zones (tools/check_zones.mjs)
+viewer: $(BUILD)/viewer.ssd
+
+$(BUILD)/viewer.ssd: $(DEPS) | $(BUILD)
+	$(BARON) -v -D VIEWER=TRUE --symbols $(BUILD)/viewer.json -o $@ --title VIEWER --opt 2 $(SRC) > $(BUILD)/viewer.lst
+
 # the same with the plotter's routines a bare RTS: its times are the bench's own decoding, to take off
 benchnull: $(BUILD)/benchnull.ssd
 
@@ -71,4 +77,4 @@ release: $(BUILD)/exolon.ssd
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all bench benchnull release clean
+.PHONY: all bench benchnull viewer release clean

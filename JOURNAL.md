@@ -432,3 +432,20 @@ Plotting alone (the bench's decoding off), cycles a pass, the hybrid's commands 
   94 47,804, 94,069; 99 42,261, 101,997. Passes over two frames: 0, 5, 10 and 8 of 380-400.
 - Left for the frame-time work: long regions (bind an 8-line sprite only to the large sprites its box meets,
   or split a region's work), and the waiting itself (the game's logic could run in it).
+
+### Phase 3: the game begins: the player, in lockstep with the CPC
+- D40 recorded (Rich away: finish the game's features, review each, commit, push, release; then the frame time;
+  32K of sideways RAM).
+- The default disc is now the game; the zone viewer is `make viewer` (`-D VIEWER`), which
+  `tools/check_zones.mjs` uses. The game's main loop (`game.6502`) and the player (`player.6502`) are main RAM's,
+  after the RTI at `&D00` (the space before `&258` holds 82 bytes).
+- `player.6502` from `docs/cpc-player.md`: the pass (`&0FA2`), the jump (the arc by the passes left, rising steps
+  probing above, the rest below), walking and turning (a turn takes the pass, standing), falling 4 lines,
+  ducking, and the four probes of the solid map (CellMap), only at cell boundaries. The zone exit at x 128:
+  the next zone from x 0 at the same height. His plot goes on plot_pass's list when his frame or place changes.
+- `tools/lockstep.py` runs the CPC harness and the game in jsbeeb (`tools/lockstep.mjs`) on the same keys, the
+  BBC's set just after the pass before has read its own, and compares x, y, the jump counter, the frame, the
+  fall and the walking direction every pass. With the CPC invulnerable (the disc's poke) and fire never held:
+  **800 passes of random keys, 0 differ**. With fire, the first 220 match and then the CPC's grenade has
+  destroyed scenery the BBC still has.
+- Not yet: his frames facing left (D29's mirroring), the status rows, and everything else.

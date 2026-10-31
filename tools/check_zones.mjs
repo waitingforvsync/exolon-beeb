@@ -1,7 +1,7 @@
 // Every zone drawn by the BBC against the original's, byte for byte, in headless jsbeeb with the real IRQ.
 //
 //   .venv/bin/python tools/genzones.py build/gen --expect      (once: build/gen/zones-expected.bin)
-//   node tools/check_zones.mjs [--first 0] [--last 124] [--dump build/zone-bad.bin]
+//   make viewer; node tools/check_zones.mjs [--first 0] [--last 124] [--dump build/zone-bad.bin]
 //
 // The zone viewer (game.6502) shows zone 0 first, each with the CPC's seed at a zone's set-up (&6512), and X
 // steps on. At each arrival at game.shown the playfield (&5000-&7BFF) is compared with the expected bytes
@@ -13,11 +13,11 @@ import { bootDisc, runTo, symbols, BBC } from "./jsbeeb.mjs";
 const args = Object.fromEntries(process.argv.slice(2).reduce((a, x, i, all) =>
     x.startsWith("--") ? [...a, [x.slice(2), all[i + 1]]] : a, []));
 const first = Number(args.first ?? 0), last = Number(args.last ?? 124);
-const syms = symbols();
+const syms = symbols("build/viewer.json");
 const expected = readFileSync("build/gen/zones-expected.bin");
 const PLAY = 0x5000, BYTES = 22 * 512;
 
-const s = await bootDisc();
+const s = await bootDisc("build/viewer.ssd");
 const shown = syms["game.shown"], enter = syms["zone_enter"];
 let bad = 0;
 const times = [];

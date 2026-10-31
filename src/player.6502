@@ -1,0 +1,297 @@
+\\ player.6502 - Vitorc (docs/cpc-player.md): walking, turning, jumping, falling and ducking against the solid map,
+\\ and leaving a zone. In main RAM.
+\\
+\\ x is the left of his 12 pixels (MODE 0, 0-127), y the top of his 32 lines. The solid map is CellMap (the CPC's
+\\ &BA00): any non-zero cell is solid; the probes look at it only at cell boundaries (x a multiple of 4, y of 8),
+\\ and say free elsewhere.
+
+SECTION Workspace
+.PlX                                    ; x
+    SKIP 1
+.PlY                                    ; y
+    SKIP 1
+.PlRx                                   ; where he came into the zone: the respawn point
+    SKIP 1
+.PlRy
+    SKIP 1
+.PlJump                                 ; the jump's passes left, 22 to 0 (0: on the ground, or falling)
+    SKIP 1
+.PlFell                                 ; non-zero: he fell last pass
+    SKIP 1
+.PlDir                                  ; this pass's walking direction, and a jump's: 1, &FF or 0
+    SKIP 1
+.PlCycle                                ; the walking frame, 0-9
+    SKIP 1
+.PlFacing                               ; 1 right, &FF left
+    SKIP 1
+.PlDuck                                 ; non-zero: ducking (&FA)
+    SKIP 1
+.PlFrame                                ; the frame last plotted (&FF: plot it whatever)
+    SKIP 1
+.PlShown                                ; and where: x, y
+    SKIP 2
+.PlSuit                                 ; added to the frame: 0, or 12 in the suit
+    SKIP 1
+.PlExit                                 ; non-zero: he left the zone this pass
+    SKIP 1
+ENDSECTION
+
+FrameWalk = 0                           ; 0-9
+FrameJump = 3
+FrameStand = 5
+FrameFall = 9
+FrameDuck = 10
+FrameDie = 11
+PlayerSlot = 0                          ; his large sprite's slot
+
+ZA_AUTO1 pkeys                          ; the pass's keys (GameKeys' bits)
+ZA_AUTO2 cp                             ; a probe's cell pointer
+
+\\ A pass of the player (the CPC's &0FA2): his move, and his frame.
+\\
+\\ Inputs:
+\\     pkeys: the keys
+\\
+\\ Outputs:
+\\     PlX, PlY, ...: his state; PlExit set if he left the zone (x 128: PlX not stored)
+\\     A: his frame (with the suit's 12)
+\\     X, Y: corrupted
+
+.player_pass
+{
+    LDA #0:STA PlExit
+    LDA PlFell:BNE fallorwalk
+    LDA PlJump:BEQ ground
+    JSR jump_step:BCC framed            ; (the jump went on: frame 3)
+    BCS fallorwalk                      ; (always: it ended)
+    ZA_UNREACHABLE
+.ground
+    JSR probe_below:BCC fallorwalk      ; (nothing under him)
+    LDA pkeys:AND #KeyDown:BEQ notduck
+    LDA #&FA:STA PlDuck                 ; ducking: no move
+    LDA #FrameDuck:BNE framed           ; (always)
+.notduck
+    LDA #0:STA PlDuck
+    LDA pkeys:AND #KeyUp:BEQ fallorwalk
+    LDA #22:STA PlJump                  ; the jump, and its first step
+    JSR jump_step:BCC framed
+.fallorwalk
+    LDA #0:STA PlFell
+    JSR probe_below:BCS walk
+    LDA PlY:CLC:ADC #4:STA PlY          ; falling: 4 lines
+    LDA #9:STA PlFell
+    LDA #FrameFall:BNE framed           ; (always)
+.walk
+    JSR walk_step
+.framed
+    CLC:ADC PlSuit
+    RTS
+}
+
+\\ A jump's step (the CPC's &0FE1): up or down by the arc for the passes left (then one fewer), probing above if
+\\ rising, below if not; blocked, the jump ends; else y moves, then x a pixel the way he was walking if the probe
+\\ that way is free.
+\\
+\\ Outputs:
+\\     C clear: it went on (A FrameJump); C set: the jump ended
+\\     X, Y: corrupted
+
+.jump_step
+{
+    ZA_AUTO1 step                       ; local: the arc's step
+
+    LDX PlJump
+    LDA JumpArc,X:STA step
+    DEC PlJump
+    LDA step:BMI rising
+    JSR probe_below:BCS ended
+    BCC moved                           ; (always)
+.rising
+    JSR probe_above:BCS ended
+.moved
+    LDA PlY:CLC:ADC step:STA PlY
+    LDA PlDir:BEQ jumped
+    BMI jumpleft
+    JSR probe_right:BCS jumped
+    INC PlX
+    BNE jumped                          ; (always: x 128 at most)
+.jumpleft
+    JSR probe_left:BCS jumped
+    DEC PlX
+.jumped
+    LDA #FrameJump
+    CLC
+    RTS
+.ended
+    LDA #0:STA PlJump
+    SEC
+    RTS
+}
+
+.JumpArc                                ; by the passes left before the step (22 first)
+    EQUB 0, 4, 4, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, -1, -1, -1, -1, -2, -2, -2, -4, -4
+
+\\ A walking pass (the CPC's &108E): left or right alone held moves a pixel that way if the probe's free, with the
+\\ next walking frame; a turn takes the pass, standing (frame 5); neither or both, he stands.
+\\
+\\ Outputs:
+\\     A: the frame
+\\     X, Y: corrupted
+
+.walk_step
+{
+    LDA pkeys:AND #KeyLeft + KeyRight
+    CMP #KeyLeft:BEQ left
+    CMP #KeyRight:BEQ right
+    LDA #0:STA PlDir                    ; (neither, or both: standing)
+.stand
+    LDA #FrameStand
+    RTS
+.right
+    LDA #1:STA PlDir
+    LDA PlFacing:BPL @+
+    LDA #1:STA PlFacing                 ; a turn: this pass standing
+    LDA #&FF:STA PlFrame
+    JSR turn
+    JMP stand
+.@
+    JSR probe_right:BCS stand
+    INC PlX
+    JMP stepped
+.left
+    LDA #&FF:STA PlDir
+    LDA PlFacing:BMI @+
+    LDA #&FF:STA PlFacing
+    LDA #&FF:STA PlFrame
+    JSR turn
+    JMP stand
+.@
+    JSR probe_left:BCS stand
+    DEC PlX
+.stepped
+    LDA PlCycle                         ; the walking frame, and the next
+    TAX:INX:CPX #10:BCC @+
+    LDX #0
+.@
+    STX PlCycle
+    RTS
+}
+
+\\ The turn (the CPC's &0E04 mirrors his frames in place): for now his frames face right whichever way he
+\\ faces (D29: to come).
+
+.turn
+{
+    RTS
+}
+
+\\ The probes (the CPC's &0EF1, &0F20, &0F4C, &0F77): the solid map ahead of him, only at a cell's boundary.
+\\
+\\ Outputs:
+\\     C set: blocked; C clear: free
+\\     A, X, Y: corrupted
+
+.probe_right
+{
+    LDA PlX:AND #3:BNE free             ; (between cells)
+    LDA PlX:CMP #116:BCS free           ; (from 116 on, always free)
+    LSR A:LSR A:CLC:ADC #3:TAX          ; the column past his right
+    JMP probe_column
+.free
+    CLC
+    RTS
+}
+
+.probe_left
+{
+    LDA PlX:BEQ blocked                 ; (x 0 is a wall)
+    AND #3:BNE free
+    LDA PlX:LSR A:LSR A:SEC:SBC #1:TAX  ; the column before his left
+    JMP probe_column
+.free
+    CLC
+    RTS
+.blocked
+    SEC
+    RTS
+}
+
+\\ His rows in column X: from y DIV 8, 4 of them, 5 if y isn't a cell's top.
+
+.probe_column
+{
+    LDA PlY:LSR A:LSR A:LSR A:JSR cell_ptr
+    LDY #0:LDA (cp),Y:BNE blocked
+    LDY #32:LDA (cp),Y:BNE blocked
+    LDY #64:LDA (cp),Y:BNE blocked
+    LDY #96:LDA (cp),Y:BNE blocked
+    LDA PlY:AND #7:BEQ free
+    LDY #128:LDA (cp),Y:BNE blocked
+.free
+    CLC
+    RTS
+.blocked
+    SEC
+    RTS
+}
+
+.probe_below
+{
+    LDA PlY:AND #7:BNE free
+    LDA PlY:LSR A:LSR A:LSR A:CLC:ADC #4    ; the row under his feet
+    JMP probe_row
+.free
+    CLC
+    RTS
+}
+
+.probe_above
+{
+    LDA PlY:AND #7:BNE free
+    LDA PlY:BEQ free                    ; (the screen's top)
+    LSR A:LSR A:LSR A:SEC:SBC #1        ; the row over his head
+    JMP probe_row
+.free
+    CLC
+    RTS
+}
+
+\\ Row A under or over him: columns x DIV 4 to it + 2, + 3 if x isn't a cell's left; from x 116 on, x DIV 4 only.
+
+.probe_row
+{
+    STA probe_rowr
+    LDA PlX:LSR A:LSR A:TAX
+    LDA probe_rowr:JSR cell_ptr
+    LDY #0:LDA (cp),Y:BNE blocked
+    LDA PlX:CMP #116:BCS free
+    INY:LDA (cp),Y:BNE blocked
+    INY:LDA (cp),Y:BNE blocked
+    LDA PlX:AND #3:BEQ free
+    INY:LDA (cp),Y:BNE blocked
+.free
+    CLC
+    RTS
+.blocked
+    SEC
+    RTS
+}
+
+ZA_AUTO1 probe_rowr                     ; probe_row's row
+
+\\ The cell pointer: CellMap + row A × 32 + column X.
+\\
+\\ Outputs:
+\\     cp: it
+\\     A: corrupted; X preserved; Y corrupted
+
+.cell_ptr
+{
+    TAY
+    LSR A:LSR A:LSR A:CLC:ADC #HI(CellMap):STA cp+1
+    STX cp
+    TYA:ASL A:ASL A:ASL A:ASL A:ASL A    ; (the row AND 7) × 32: its top bits shift out
+    ORA cp:STA cp
+    RTS
+}
+ASSERT LO(CellMap) == 0, "the cell map on a page"

@@ -45,7 +45,7 @@ IF DEFINED(BENCH)
     JMP loop
 }
 
-ELSE
+ELIF DEFINED(VIEWER)
 
 .game
 {
@@ -78,5 +78,100 @@ ELSE
     ZA_UNREACHABLE
 }
 ASSERT KeyLeft == 1 AND KeyRight == 2, "the viewer's keys: Z bit 0, X bit 1"
+
+ELSE
+
+StartZone = 0
+
+\\ The game: a pass at a time, every second frame (D8). For now: the player, the zones, his plot.
+\\
+\\ Inputs:
+\\     none
+\\
+\\ Outputs:
+\\     none: it never returns
+
+.game
+{
+    LDA #LO(TitleSeed):STA seed         ; (the original's seed when started from the title)
+    LDA #HI(TitleSeed):STA seed+1
+    LDA #StartZone:STA zone
+    JSR new_game
+    JSR enter_zone
+    LDX irqframes:INX:STX wait_pass.passframe
+.loop
+    JSR wait_pass:STA pkeys
+.keyed                                  ; (tools/lockstep.mjs: the pass's keys read)
+    JSR player_pass:STA pframe
+    LDA PlX:BPL here                    ; (x 128: the zone's exit)
+    LDA #0:STA PlX:STA PlRx             ; the next zone, from its left edge at the same height
+    LDA PlY:STA PlRy
+    INC zone
+    LDA zone:CMP #ZoneCount:BCC @+
+    LDA #0:STA zone                     ; (after the last, the first: for now)
+.@
+    JSR enter_zone
+    JMP passed
+.here
+    JSR plot_player
+.passed                                 ; (tools/lockstep.mjs: the pass's logic done)
+    LDA bankdata:STA &FE30              ; ROMSEL: the plotter's bank
+    JSR plot_pass
+    LDA bankcode:STA &FE30              ; ROMSEL: the code's
+    JMP loop
+    ZA_UNREACHABLE
+}
+
+ZA_AUTO1 pframe                         ; the player's frame this pass
+
+\\ A game's start (the CPC's &068F): the player at 16, 112 facing right, and that the respawn point.
+
+.new_game
+{
+    LDA #16:STA PlX:STA PlRx
+    LDA #112:STA PlY:STA PlRy
+    LDA #0
+    STA PlJump:STA PlFell:STA PlDir:STA PlCycle:STA PlDuck:STA PlSuit:STA PlExit
+    LDA #1:STA PlFacing:STA PlDir         ; (facing right, and walking so: the CPC's &10F1 is 1)
+    LDA #&FF:STA PlFrame
+    RTS
+}
+
+\\ A zone set up (the CPC's &126E): drawn, its objects made; nothing drawn on it yet, so every slot is empty
+\\ and the player's plotted whatever.
+
+.enter_zone
+{
+    LDX zone:JSR zone_enter
+    LDA #0
+    LDX #MaxSlots-1
+.slots
+    STA SlotW,X
+    DEX:BPL slots
+    STA LgCount:STA DbCount:STA SmCount
+    LDA #&FF:STA PlFrame
+    RTS
+}
+
+\\ The player's plot, if his frame or his place changed: on plot_pass's list.
+
+.plot_player
+{
+    LDA pframe:CMP PlFrame:BNE plot
+    LDA PlX:CMP PlShown:BNE plot
+    LDA PlY:CMP PlShown+1:BEQ done
+.plot
+    LDA pframe:STA PlFrame
+    LDA PlX:STA PlShown
+    LDA PlY:STA PlShown+1
+    LDX LgCount:INC LgCount
+    LDA #PlayerSlot:STA LgSlot,X
+    LDA PlX:LSR A                       ; C: his shift
+    LDA pframe:ROL A:STA LgSpr,X        ; frame × 2 + the shift
+    LDA PlX:STA LgX,X
+    LDA PlY:STA LgY,X
+.done
+    RTS
+}
 
 ENDIF
