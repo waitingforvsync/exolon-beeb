@@ -12,7 +12,7 @@ INCLUDE "macros.6502"
 
 SECTION CodeFile, filename = "EXOC", load = &FFFF0000+BankLoad
     SECTION SwramCode, org = SwramOrg, guard = SwramEnd, transform = "zx02"
-        EQUS "Exolon's zones, packed, and their decoder" ; (to come: Phase 2)
+        INCLUDE "zone.6502"             ; a zone set up between screens, with the zones and tiles packed
     ENDSECTION
 ENDSECTION
 
@@ -29,18 +29,16 @@ SECTION Exo2, org = LoadFloor, load = &FFFF0000+LoadFloor, exec = &FFFF0000+entr
 .maincode_image
     SECTION MainCode, org = MainCodeOrg, guard = ScreenAddr, transform = "zx02"
         INCLUDE "irq.6502"              ; the frame's interrupt and the keys
-        INCLUDE "game.6502"             ; the main loop
-        INCLUDE "../build/gen/pens.6502"    ; the pens' dithered bytes (tools/gendata.py)
+        INCLUDE "rand.6502"             ; the original's random numbers
+        INCLUDE "pass.6502"             ; a pass's start, every second frame
 
         PADTO Irq1vAddr
         EQUW irq                        ; IRQ1V
 
-        INCLUDE "testcard.6502"         ; the display test, for now
+        INCLUDE "game.6502"             ; the main loop (for now the zone viewer)
 
         PADTO BreakAddr
         EQUB 2                          ; clear memory on BREAK
-
-        INCLUDE "marker.6502"           ; the display test's marker, for now
 
         PADTO NmiOrg
         RTI                             ; stray NMIs

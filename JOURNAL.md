@@ -172,3 +172,20 @@ O7-O14 (`docs/decisions.md`).
   sprites always behind the map; bit 3 as is useful. P9 and P10 rewritten: bit 3 marks the map's coloured
   pixels and the stars, so drawing and clearing read what's in front from the screen itself, and nothing is
   ever restored from tile data.
+
+### Phase 2: the zones drawn on the BBC (the zone viewer)
+- `tools/genzones.py`: the placement lists and object scripts as Baron source (labels for every pointer; the
+  Spectrum's 543 attribute bytes dropped; block-set switches as global tile numbers), and the 492 tiles
+  (blank, 7 stars, the barrier, the 21 sets whole) dithered to MODE 2 in the screen's order for a cell, bit 3
+  on every pixel of a pen but 0 (P10). `--check` runs the rewritten scripts as the 6502 does and agrees with
+  zonemodel in every cell of all 125 zones. Packed: zones' data 6,031 → 3,557, tiles 7,872 → 3,498.
+- `src/zone.6502` (the code's bank): the display off; the zones' data unpacked into the screen; the stars (the
+  original's generator, `src/rand.6502`, with its A at each call); each placement's script run into the tile
+  map (local tile numbers given on first use, at most 195 a zone) and the cell map; the special cells and the
+  barrier; the tiles unpacked into the screen and the zone's copied out; the playfield drawn, a cell 16
+  consecutive bytes (cell n at `&5000 + 16n`).
+- The main loop is a zone viewer for now: X and Z step through the zones, each with the CPC's seed `&6512`.
+- `tools/check_zones.mjs` (headless jsbeeb): **all 125 zones match the original byte for byte**, stars
+  included (so `rand` is right too).
+- Too slow: `zone_enter` 599-647 ms against the CPC's 190-273 (unpacking 440 of it). P13 for Rich.
+- The loader clears the status rows (the OS's MODE 7 screen was there).

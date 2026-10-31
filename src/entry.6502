@@ -67,6 +67,14 @@
     LDA #HI(MainCodeOrg):STA zx.dst+1
     JSR zx.unpack
 
+    \\ the status rows cleared: the OS's MODE 7 screen was there, and nothing draws them yet
+
+    LDA #0:TAX
+.status
+    STA StatusAddr,X:STA StatusAddr+&100,X:STA StatusAddr+&200,X:STA StatusAddr+&300,X
+    INX:BNE status
+    ASSERT &8000 - StatusAddr == &400, "the status rows: 4 pages"
+
     \\ the VIAs: System VIA T1 free-running, its only interrupt; the keyboard scanned by hand; the ACIA reset,
     \\ in case a *FX2 left its interrupts on
 

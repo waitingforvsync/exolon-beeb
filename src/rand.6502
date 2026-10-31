@@ -1,0 +1,36 @@
+\\ rand.6502 - the original's random numbers (&3AE7, docs/cpc-loop.md), the same on both machines so the BBC
+\\ can follow the original: seed' = 13 × (seed + 7), and the caller's A EOR seed' high byte. In main RAM.
+
+ZA_AUTO2 seed                           ; the generator's state: never reset (the title's length sets it)
+
+\\ The next random number.
+\\
+\\ Inputs:
+\\     A: the caller's value, EORed into the result (as the original's callers pass it)
+\\     seed: the state
+\\
+\\ Outputs:
+\\     A: A EOR the new seed's high byte, N and Z from it
+\\     seed: 13 × (seed + 7)
+\\     X, Y: preserved
+
+.rand
+{
+    ZA_AUTO1 in                         ; local: A on entry
+    ZA_AUTO2 s4                         ; local: (seed + 7) × 4, then × 8
+
+    STA in
+    CLC
+    LDA seed:ADC #7:STA seed:STA s4
+    LDA seed+1:ADC #0:STA seed+1        ; s = seed + 7, in place (all of it mod 65536, as the Z80's)
+    ASL s4:ROL A:ASL s4:ROL A:STA s4+1  ; 4s
+    CLC
+    LDA seed:ADC s4:STA seed
+    LDA seed+1:ADC s4+1:STA seed+1      ; 5s
+    ASL s4:ROL s4+1                     ; 8s
+    CLC
+    LDA seed:ADC s4:STA seed
+    LDA seed+1:ADC s4+1:STA seed+1      ; 13s
+    EOR in
+    RTS
+}

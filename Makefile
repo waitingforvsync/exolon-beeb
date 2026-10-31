@@ -7,7 +7,8 @@
 #                  named, and pushed
 #   make clean
 #
-# The data (build/gen) comes from the CPC disc, docs/exolon.dsk (git-ignored), through tools/gendata.py.
+# The data (build/gen) comes from the CPC disc, docs/exolon.dsk (git-ignored), through tools/gendata.py and
+# tools/genzones.py.
 # Claude's emulator is jsbeeb, through jsbeeb-mcp only.
 
 BARON ?= baron
@@ -23,12 +24,16 @@ TITLE := $(shell date +%y%m%d-%H%M)
 
 SRC = src/boot.6502 src/exolon.6502
 GENOUT = $(GEN)/pens.6502
-DEPS = $(wildcard src/*.6502) $(GENOUT)
+ZONEOUT = $(GEN)/zones.6502 $(GEN)/tiles.bin $(GEN)/tiles.6502
+DEPS = $(wildcard src/*.6502) $(GENOUT) $(ZONEOUT)
 
 all: $(BUILD)/exolon.ssd
 
 $(GENOUT) &: tools/gendata.py tools/cpc.py tools/cpcdsk.py $(DSK) | $(BUILD)
 	$(PY) tools/gendata.py $(GEN)
+
+$(ZONEOUT) &: tools/genzones.py tools/gendata.py tools/cpc.py tools/cpcdsk.py $(DSK) | $(BUILD)
+	$(PY) tools/genzones.py $(GEN)
 
 $(BUILD)/exolon.ssd: $(DEPS) | $(BUILD)
 	$(BARON) -v --symbols $(BUILD)/exolon.json -o $@ --title $(TITLE) --opt 2 $(SRC) > $(BUILD)/exolon.lst

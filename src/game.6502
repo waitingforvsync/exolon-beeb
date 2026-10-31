@@ -1,14 +1,12 @@
-\\ game.6502 - the main loop. For now the display test (Phase 0): the test card, and a marker the keys move a
-\\ step a pass, a pass every FramesPerPass frames.
+\\ game.6502 - the main loop. For now a zone viewer (Phase 2): Z and X step back and on through the 125 zones,
+\\ each set up and drawn by zone_enter as the game will.
 
-ZA_AUTO1 markerx, markery               ; the marker's left byte and top line
-ZA_AUTO1 markercol                      ; and its colour
+ZA_AUTO1 zone                           ; the zone shown, 0-124
 
-MarkerStartX = ScreenColumns DIV 2 - 1
-MarkerStartY = PlayRows * 4 - 8
-MarkerStep = 2                          ; lines a step
+ZoneCount = 125
+TitleSeed = &6512                       ; the CPC's seed at every zone's set-up when started from the title
 
-\\ The game: for now the display test, for good.
+\\ The viewer: zone 0 first; X the next, Z the one before, a step a key press.
 \\
 \\ Inputs:
 \\     none
@@ -18,74 +16,32 @@ MarkerStep = 2                          ; lines a step
 
 .game
 {
-    ZA_AUTO1 held                       ; local: the pass's keys, taken a bit at a time
+    LDA #0:STA zone
+.show
+    LDA #LO(TitleSeed):STA seed         ; (the original's stars for the zone, to check against)
+    LDA #HI(TitleSeed):STA seed+1
+    LDX zone:JSR zone_enter
+.shown                                  ; (the zone drawn: tools/check_zones.mjs stops here)
+    LDX irqframes:INX:STX wait_pass.passframe
 
-    JSR test_card
-    LDA #MarkerStartX:STA markerx
-    LDA #MarkerStartY:STA markery
-    LDA #7:STA markercol
-    JSR marker
+    \\ a key: X on, Z back; then each key let go before the next
 
-    \\ the display on, once the screen's drawn (the IRQ never touches the CRTC)
-
-    LDA #8:STA &FE00                    ; CRTC: R8
-    LDA #R8On:STA &FE01
-    LDX irqframes:INX:STX wait_pass.passframe ; the first pass at the next frame's start, as all the others
-
-    \\ a pass: the marker off, moved by the keys, and on again; RETURN steps its colour
-
-.loop
-    JSR wait_pass
-    BEQ loop                            ; nothing down: nothing moves
-    STA held
-    JSR marker
-    LSR held:BCC @+                     ; left
-    LDA markerx:BEQ @+
-    DEC markerx
-.@
-    LSR held:BCC @+                     ; right
-    LDA markerx:CMP #ScreenColumns-2:BCS @+
-    INC markerx
-.@
-    LSR held:BCC @+                     ; up
-    LDA markery:CMP #MarkerStep:BCC @+
-    SBC #MarkerStep:STA markery         ; (C set)
-.@
-    LSR held:BCC @+                     ; down
-    LDA markery:CMP #PlayRows*8-MarkerLines:BCS @+
-    ADC #MarkerStep:STA markery         ; (C clear)
-.@
-    LSR held:BCC @+                     ; fire
-    LDA markercol:ADC #0:AND #7:STA markercol ; (C set: one more)
-.@
-    JSR marker
-    JMP loop
+.waitkey
+    JSR wait_pass:BEQ waitkey
+    LDX zone
+    LSR A:BCS back                      ; (KeyLeft, Z)
+    LSR A:BCC waitkey                   ; (KeyRight, X)
+    INX:CPX #ZoneCount:BCC moved
+    LDX #0
+    BEQ moved                           ; (always)
+.back
+    DEX:BPL moved
+    LDX #ZoneCount-1
+.moved
+    STX zone
+.released
+    JSR wait_pass:BNE released
+    BEQ show                            ; (always)
+    ZA_UNREACHABLE
 }
-
-\\ Wait for the pass's frame to start, as the beam leaves the screen: FramesPerPass after the last pass's, or
-\\ the next frame's if the last ran late, so every pass starts at line 192. Then take the keys.
-\\
-\\ Inputs:
-\\     passframe: the frame this pass may start at
-\\
-\\ Outputs:
-\\     passframe: the next pass's
-\\     A: the keys down at any frame since the last pass (GameKeys' bits), Z from it
-\\     keys: emptied
-\\     X: 0
-\\     Y: preserved
-
-.wait_pass
-{
-    ZA_AUTO1 passframe                  ; in, out: the frame the pass may start at
-
-    LDX irqframes:CPX passframe:BMI ontime  ; (mod 256: negative while it's to come)
-    INX:STX passframe                   ; late: from the next frame's start instead
-.ontime
-    LDA passframe
-.wait
-    CMP irqframes:BNE wait
-    ADC #FramesPerPass-1:STA passframe  ; (C set: equal)
-    LDX #0:LDA keys:STX keys            ; (no SEI: the IRQ's just been, the next a frame off)
-    RTS
-}
+ASSERT KeyLeft == 1 AND KeyRight == 2, "the viewer's keys: Z bit 0, X bit 1"

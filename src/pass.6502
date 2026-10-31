@@ -1,0 +1,30 @@
+\\ pass.6502 - the pass's start: every second frame (D8), as the beam leaves the screen, and the keys taken. In
+\\ main RAM.
+
+\\ Wait for the pass's frame to start, as the beam leaves the screen: FramesPerPass after the last pass's, or
+\\ the next frame's if the last ran late, so every pass starts at line 192. Then take the keys.
+\\
+\\ Inputs:
+\\     passframe: the frame this pass may start at
+\\
+\\ Outputs:
+\\     passframe: the next pass's
+\\     A: the keys down at any frame since the last pass (GameKeys' bits), Z from it
+\\     keys: emptied
+\\     X: 0
+\\     Y: preserved
+
+.wait_pass
+{
+    ZA_AUTO1 passframe                  ; in, out: the frame the pass may start at
+
+    LDX irqframes:CPX passframe:BMI ontime  ; (mod 256: negative while it's to come)
+    INX:STX passframe                   ; late: from the next frame's start instead
+.ontime
+    LDA passframe
+.wait
+    CMP irqframes:BNE wait
+    ADC #FramesPerPass-1:STA passframe  ; (C set: equal)
+    LDX #0:LDA keys:STX keys            ; (no SEI: the IRQ's just been, the next a frame off)
+    RTS
+}

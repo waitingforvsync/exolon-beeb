@@ -1,0 +1,657 @@
+\\ zone.6502 - a zone set up between screens (P8, D12, D21): its placements' scripts run into the tile map and the
+\\ cell map, its tiles copied out to the workspace, and the playfield drawn from them, with the display off.
+\\ In the code's bank, with the zones' data and the tiles, both packed. The spec is docs/cpc-zones.md.
+
+INCLUDE "../build/gen/tiles.6502"       ; the global tile numbers the code needs (tools/genzones.py)
+
+MaxTiles = 196                          ; a zone's tiles: 160 at most from its scripts, 9 fixed, 26 animated
+MaxDepth = 4                            ; loops and sub-scripts open at once (2 at most in the scripts)
+Unassigned = &FF                        ; in GlobalToLocal: no local number yet
+ZoneDataOrg = ScreenAddr                ; where the zones' data unpacks, then the tiles
+TilesOrg = ScreenAddr
+ASSERT TileCount * 16 <= &8000 - TilesOrg, "the tiles unpack within the screen"
+ASSERT MaxTiles < Unassigned, "a local tile number is a byte, short of Unassigned"
+ASSERT TileStar == 1 AND TileBarrier == 8 AND TileBlank == 0, "tiles 0-8: the blank, the stars by pen, the barrier"
+
+SECTION Workspace
+    ALIGN &100
+.TileMap                                ; a cell's local tile, row × 32 + column, rows 0-21
+    SKIP &300
+.CellMap                                ; what a cell is (the CPC's &BA00): 0 open, 1 solid, 3 a gun, 13 a launcher
+    SKIP PlayRows * 32
+    ALIGN &100
+.GlobalToLocal                          ; a global tile's local number, or Unassigned; kept for play
+    SKIP 512
+.LocalToGlobalLo                        ; a local tile's global number
+    SKIP MaxTiles
+.LocalToGlobalHi
+    SKIP MaxTiles
+.FrameOffset                            ; an open loop's or sub-script's: where its script goes on
+    SKIP MaxDepth
+.FrameCount                             ; a loop's passes left
+    SKIP MaxDepth
+.FrameScriptLo                          ; a sub-script's caller: its script and pen
+    SKIP MaxDepth
+.FrameScriptHi
+    SKIP MaxDepth
+.FrameRow
+    SKIP MaxDepth
+.FrameCol
+    SKIP MaxDepth
+    ALIGN &100
+.LocalTiles                             ; the zone's tiles, 16 bytes each in the screen's order for a cell
+    SKIP MaxTiles * 16
+ENDSECTION
+ASSERT CellMap == TileMap + &300, "the cell map 3 pages after the tile map: one row pointer serves both"
+
+\\ The interpreter's state, shared by its routines
+
+ZA_AUTO2 script                         ; the script running
+ZA_AUTO1 offset                         ; the next byte's offset in it (every script is under 256 bytes)
+ZA_AUTO1 penrow, pencol                 ; where the next block goes (the Z80's D and E)
+ZA_AUTO2 setbase                        ; the block set's first global tile (&E6)
+ZA_AUTO1 cellval                        ; what each block makes its cell (the CPC's &3BD5, &E8)
+ZA_AUTO1 depth                          ; loops and sub-scripts open
+ZA_AUTO2 gid                            ; a global tile
+ZA_AUTO1 freetile                       ; the next local tile number not given
+ZA_AUTO2 row                            ; a row of the tile map (TileMap + row × 32), or the cell map's (+ &300)
+ZA_AUTO1 barrierrow, barriercol         ; the barrier's emitter (row &FF: none)
+
+\\ Set up a zone: the display off, the zones' data unpacked into the screen, the stars, the placements' scripts
+\\ run into the tile and cell maps, the special cells, the barrier, the zone's tiles copied out, and the
+\\ playfield drawn.
+\\
+\\ Inputs:
+\\     X: the zone, 0-124
+\\     seed: the generator's state, for the stars
+\\
+\\ Outputs:
+\\     TileMap, CellMap, GlobalToLocal, LocalTiles: the zone's; the playfield drawn and the display on
+\\     seed: moved on by the stars
+\\     A, X, Y: corrupted
+
+.zone_enter
+{
+    ZA_AUTO1 zone2                      ; local: the zone × 2
+    ZA_AUTO2 list                       ; local: the zone's placements
+
+    LDA #8:STA &FE00                    ; CRTC: R8
+    LDA #R8Off:STA &FE01                ; the display off: the screen's a buffer until it's drawn
+    TXA:ASL A:STA zone2
+
+    \\ the zones' data unpacked into the screen, and the zone's placements found
+
+    LDA #LO(zones_packed):STA zunpack.src
+    LDA #HI(zones_packed):STA zunpack.src+1
+    LDA #LO(ZoneDataOrg):STA zunpack.dst
+    LDA #HI(ZoneDataOrg):STA zunpack.dst+1
+    JSR zunpack.unpack
+    LDY zone2
+    LDA ZdZones,Y:STA list
+    LDA ZdZones+1,Y:STA list+1
+
+    \\ the maps cleared; local tiles 0-8 their global numbers (the blank, the stars, the barrier), the others not
+    \\ given yet
+
+    LDX #0
+.clear
+    LDA #0
+    STA TileMap,X:STA TileMap+&100,X:STA TileMap+&200,X
+    STA CellMap,X:STA CellMap+&100,X:STA CellMap+&200,X
+    LDA #Unassigned
+    STA GlobalToLocal,X:STA GlobalToLocal+&100,X
+    INX:BNE clear
+    LDX #TileBarrier
+.fixed
+    TXA:STA GlobalToLocal,X:STA LocalToGlobalLo,X
+    LDA #0:STA LocalToGlobalHi,X
+    DEX:BPL fixed
+    LDA #TileBarrier+1:STA freetile
+
+    JSR stars
+
+    \\ the placements: each one's script from its row and column, its blocks solid unless it says otherwise
+
+.placement
+    LDY #0
+    LDA (list),Y:BMI placed             ; &FF ends (a row's 0-21)
+    STA penrow
+    INY:LDA (list),Y:STA pencol
+    INY:LDA (list),Y:ASL A:TAX          ; the object × 2
+    LDA ZdScripts,X:STA script
+    LDA ZdScripts+1,X:STA script+1
+    LDA #1:STA cellval
+    JSR run_script
+    LDA list:CLC:ADC #3:STA list
+    BCC placement
+    INC list+1
+    BCS placement                       ; (always: INC keeps C)
+    ZA_UNREACHABLE
+.placed
+
+    JSR special_cells
+    JSR barrier
+
+    \\ the tiles unpacked into the screen, and the zone's copied out
+
+    LDA #LO(tiles_packed):STA zunpack.src
+    LDA #HI(tiles_packed):STA zunpack.src+1
+    LDA #LO(TilesOrg):STA zunpack.dst
+    LDA #HI(TilesOrg):STA zunpack.dst+1
+    JSR zunpack.unpack
+    JSR copy_tiles
+
+    \\ the playfield drawn and shown
+
+    JSR draw_playfield
+    LDA #8:STA &FE00                    ; CRTC: R8
+    LDA #R8On:STA &FE01                 ; the display on
+    RTS
+}
+
+\\ The row pointer for a row of the tile map.
+\\
+\\ Inputs:
+\\     A: the row, 0-23
+\\
+\\ Outputs:
+\\     row: TileMap + the row × 32
+\\     A: corrupted; X, Y: preserved
+
+.row_of
+{
+    STA row+1                           ; (the row, for now)
+    ASL A:ASL A:ASL A:ASL A:ASL A:STA row   ; (the row AND 7) × 32: its top bits shift out
+    LDA row+1:LSR A:LSR A:LSR A
+    CLC:ADC #HI(TileMap):STA row+1
+    RTS
+}
+
+\\ The stars (the CPC's &2FF6): rows 21 to 0, three a row, each in a column and a pen from the generator, with
+\\ the original's values of A at each call so they follow its seed. A star is tile 1-7, by its pen.
+\\
+\\ Inputs:
+\\     seed: the generator's state
+\\
+\\ Outputs:
+\\     TileMap: the stars' cells
+\\     seed: moved on
+\\     A, X, Y: corrupted
+
+.stars
+{
+    ZA_AUTO1 arg                        ; local: A for the next column's call (&C5 the first, 0 after)
+    ZA_AUTO1 count                      ; local: stars left in the row
+    ZA_AUTO1 srow                       ; local: the row
+
+    LDA #&C5:STA arg
+    LDA #PlayRows-1:STA srow
+.starrow
+    LDA srow:JSR row_of
+    LDA #3:STA count
+.star
+    LDA arg:JSR rand:AND #&1F:TAY       ; the column
+    LDA #0:STA arg
+    LDA #&FF                            ; (the first pen's A: the cell's &B700, &FF)
+.pen
+    JSR rand:AND #&54:BNE inked         ; the pen's bits 0-2 at bits 2, 4, 6
+    LDA #0:BEQ pen                      ; (always)
+    ZA_UNREACHABLE
+.inked
+    LSR A:LSR A:TAX
+    LDA StarTile,X:STA (row),Y
+    DEC count:BNE star
+    DEC srow:BPL starrow
+    RTS
+}
+
+.StarTile                               ; a star's tile by its pen byte (&54's bits) shifted down 2
+    EQUB TileStar - 1 + ((0..21) AND 1) + ((0..21) AND 4) DIV 2 + ((0..21) AND 16) DIV 4
+
+\\ Run a script (the CPC's &3CDD, docs/cpc-zones.md) from its first byte to its end, with the pen where it's set.
+\\ The bytecodes are the CPC's, less the Spectrum's attributes; &E6's operand is a global tile number.
+\\
+\\ Inputs:
+\\     script: the script
+\\     penrow, pencol: where it starts
+\\     cellval: what its blocks make their cells
+\\
+\\ Outputs:
+\\     TileMap, CellMap: its blocks and markers
+\\     setbase, cellval: as the script left them
+\\     A, X, Y: corrupted
+
+.run_script
+{
+    LDA #0:STA offset:STA depth
+.next
+    JSR fetch
+    CMP #&61:BCC block
+    CMP #&90:BCC move
+    CMP #&DF:BCC newline                ; (&90-&CE: the attributes &CF-&DE are gone)
+    SBC #&DF                            ; (C set)
+    CMP #&EC-&DF:BCS ended
+    TAX
+    LDA OpsLo,X:STA dispatch+1
+    LDA OpsHi,X:STA dispatch+2
+.dispatch
+    JMP &FFFF                           ; self-modified: the bytecode's handler
+    ZA_CANJUMP setpos, next, loop, loopend, sub, across, down, setbase_op, blank, cell, marker
+
+    \\ the script's end: done, or back to the sub-script's caller
+
+.ended
+    LDX depth:BEQ done
+    DEX:STX depth
+    LDA FrameOffset,X:STA offset
+    LDA FrameScriptLo,X:STA script
+    LDA FrameScriptHi,X:STA script+1
+    LDA FrameRow,X:STA penrow
+    LDA FrameCol,X:STA pencol
+    JMP next
+.done
+    RTS
+
+    \\ a block of the set at the pen; the pen one on
+
+.block
+    CLC:ADC setbase:STA gid
+    LDA setbase+1:ADC #0:STA gid+1
+    JSR place
+    INC pencol
+    JMP next
+
+    \\ a move: rows by the byte less &78, columns by the next
+
+.move
+    SEC:SBC #&78:CLC:ADC penrow:STA penrow
+    JSR fetch:CLC:ADC pencol:STA pencol
+    JMP next
+
+    \\ a newline: a row down, columns by the byte less &AF
+
+.newline
+    SBC #&AF-1                          ; (C clear: under &DF)
+    CLC:ADC pencol:STA pencol
+    INC penrow
+    JMP next
+
+.setpos                                 ; &DF r c: the pen to row r, column c
+    JSR fetch:STA penrow
+    JSR fetch:STA pencol
+    JMP next
+
+.loop                                   ; &E1 n: the body to &E2 n times (0: 256)
+    LDX depth
+    JSR fetch:STA FrameCount,X
+    LDA offset:STA FrameOffset,X
+    INC depth
+    JMP next
+
+.loopend                                ; &E2
+    LDX depth:DEX
+    DEC FrameCount,X:BEQ looped
+    LDA FrameOffset,X:STA offset
+    JMP next
+.looped
+    DEC depth
+    JMP next
+
+.sub                                    ; &E3 lo hi: the script there, then the pen put back
+    JSR fetch:STA gid                   ; (lo: gid's free here)
+    JSR fetch:TAY                       ; (hi)
+    LDX depth
+    LDA offset:STA FrameOffset,X
+    LDA script:STA FrameScriptLo,X
+    LDA script+1:STA FrameScriptHi,X
+    LDA penrow:STA FrameRow,X
+    LDA pencol:STA FrameCol,X
+    INC depth
+    STY script+1
+    LDA gid:STA script
+    LDA #0:STA offset
+    JMP next
+
+.across                                 ; &E4 n b: block b n times across
+    JSR repeat_setup
+.acrossone
+    JSR place
+    INC pencol
+    DEC repeats:BNE acrossone
+    JMP next
+
+.down                                   ; &E5 n b: block b n times down
+    JSR repeat_setup
+.downone
+    JSR place
+    INC penrow
+    DEC repeats:BNE downone
+    JMP next
+
+.setbase_op                             ; &E6 lo hi: the block set's first global tile
+    JSR fetch:STA setbase
+    JSR fetch:STA setbase+1
+    JMP next
+
+.blank                                  ; &E7: the blank (the CPC's font space) at the pen; the pen one on
+    LDA #0:STA gid:STA gid+1
+    JSR place
+    INC pencol
+    JMP next
+
+.cell                                   ; &E8 v: what the blocks make their cells
+    JSR fetch:STA cellval
+    JMP next
+
+.marker                                 ; &EB v: the cell at the pen (rows and columns AND 31) made v; no tile
+    LDA penrow:AND #31:JSR row_of
+    LDA row+1:CLC:ADC #3:STA row+1      ; (the cell map's row)
+    LDA pencol:AND #31:TAY
+    JSR fetch:STA (row),Y
+    JMP next
+
+}
+
+.OpsLo                                  ; &DF-&EB's handlers (&E0's attribute, &E9 and &EA do nothing here)
+    EQUB LO(run_script.setpos), LO(run_script.next), LO(run_script.loop), LO(run_script.loopend)
+    EQUB LO(run_script.sub), LO(run_script.across), LO(run_script.down), LO(run_script.setbase_op)
+    EQUB LO(run_script.blank), LO(run_script.cell), LO(run_script.next), LO(run_script.next)
+    EQUB LO(run_script.marker)
+.OpsHi
+    EQUB HI(run_script.setpos), HI(run_script.next), HI(run_script.loop), HI(run_script.loopend)
+    EQUB HI(run_script.sub), HI(run_script.across), HI(run_script.down), HI(run_script.setbase_op)
+    EQUB HI(run_script.blank), HI(run_script.cell), HI(run_script.next), HI(run_script.next)
+    EQUB HI(run_script.marker)
+ASSERT OpsHi - OpsLo == &EC - &DF, "a handler for each of &DF-&EB"
+
+ZA_AUTO1 repeats                        ; &E4 and &E5's count
+
+\\ The next byte of the script.
+\\
+\\ Inputs:
+\\     script, offset: the script and where in it
+\\
+\\ Outputs:
+\\     A: the byte
+\\     offset: one on
+\\     X: preserved; Y: offset's old value
+
+.fetch
+{
+    LDY offset
+    LDA (script),Y
+    INC offset
+    RTS
+}
+
+\\ &E4 and &E5's operands: the count to repeats, the block's global tile to gid.
+\\
+\\ Inputs:
+\\     script, offset: at the count
+\\
+\\ Outputs:
+\\     repeats: the count (0: 256); gid: the set's tile for the block
+\\     A, Y: corrupted
+
+.repeat_setup
+{
+    JSR fetch:STA repeats
+    JSR fetch
+    CLC:ADC setbase:STA gid
+    LDA setbase+1:ADC #0:STA gid+1
+    RTS
+}
+
+\\ A tile at the pen: the tile map gets its local number, the cell map cellval. Columns 32-63 and 224-255 are off
+\\ the screen (the CPC's BIT 5,E) and dropped. The pen doesn't move.
+\\
+\\ Inputs:
+\\     gid: the global tile
+\\     penrow, pencol: the cell
+\\     cellval: what the cell becomes
+\\
+\\ Outputs:
+\\     TileMap, CellMap: the cell's
+\\     A, X, Y: corrupted
+
+.place
+{
+    LDA pencol:AND #&20:BNE off
+    JSR local_tile:TAX
+    LDA penrow:JSR row_of
+    LDA pencol:AND #31:TAY
+    TXA:STA (row),Y
+    LDA row+1:CLC:ADC #3:STA row+1      ; (the cell map's row)
+    LDA cellval:STA (row),Y
+.off
+    RTS
+}
+
+\\ A global tile's local number, giving it the next free one if it hasn't one yet.
+\\
+\\ Inputs:
+\\     gid: the global tile
+\\
+\\ Outputs:
+\\     A: its local number
+\\     X, Y: corrupted
+
+.local_tile
+{
+    LDX gid
+    LDA gid+1:BNE high
+    LDA GlobalToLocal,X:CMP #Unassigned:BNE got
+    LDA freetile:STA GlobalToLocal,X
+    BCS give                            ; (always: C set by the CMP's equal)
+    ZA_UNREACHABLE
+.high
+    LDA GlobalToLocal+&100,X:CMP #Unassigned:BNE got
+    LDA freetile:STA GlobalToLocal+&100,X
+.give
+    TAY
+    TXA:STA LocalToGlobalLo,Y
+    LDA gid+1:STA LocalToGlobalHi,Y
+    TYA
+    INC freetile
+.got
+    RTS
+}
+
+\\ The special cells (the CPC's &1BE0): each marker 2-17 made its kind's value; the kinds with animations given
+\\ their tiles, and the barrier's emitter noted.
+\\
+\\ Inputs:
+\\     CellMap: the placements' markers
+\\
+\\ Outputs:
+\\     CellMap: each marker its kind's value
+\\     barrierrow, barriercol: the emitter's cell (row &FF: none)
+\\     GlobalToLocal: the animations' tiles too, if the zone has the kinds
+\\     A, X, Y: corrupted
+
+.special_cells
+{
+    ZA_AUTO1 srow                       ; local: the row
+    ZA_AUTO1 anims                      ; local: the animations needed (KindAnims' bits)
+
+    LDA #0:STA anims
+    LDA #&FF:STA barrierrow
+    LDA #PlayRows-1:STA srow
+.cells
+    LDA srow:JSR row_of
+    LDA row+1:CLC:ADC #3:STA row+1      ; (the cell map's row)
+    LDY #31
+.look
+    LDA (row),Y:CMP #2:BCC open
+    TAX
+    LDA KindCell,X:STA (row),Y
+    LDA anims:ORA KindAnims,X:STA anims
+    CPX #17:BNE open
+    STY barriercol
+    LDA srow:STA barrierrow
+.open
+    DEY:BPL look
+    DEC srow:BPL cells
+
+    \\ the animations' tiles: the flames, the guns' muzzles, the burning mine
+
+    LSR anims:BCC noflames
+    LDA #LO(TileFlames):LDX #6:JSR give_tiles
+.noflames
+    LSR anims:BCC noguns
+    LDA #LO(TileMuzzles):LDX #16:JSR give_tiles
+.noguns
+    LSR anims:BCC nomines
+    LDA #LO(TileMine):LDX #4:JSR give_tiles
+.nomines
+    RTS
+}
+ASSERT HI(TileFlames) == 0 AND HI(TileMuzzles + 15) == 0 AND HI(TileMine + 3) == 0, "the animations' tiles under 256"
+
+.KindCell                               ; a marker's kind to the cell's value (the CPC's &1C42 table, byte 5)
+    EQUB 0, 1, 0, 3, 0, 1, 1, 0, 0, 0, 1, 0, 1, 13, 0, 0, 0, 1
+.KindAnims                              ; the animations a kind needs: 1 flames, 2 guns' muzzles, 4 a mine
+    EQUB 0, 0, 1, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
+\\ A run of global tiles given local numbers (the animations': they keep them through play).
+\\
+\\ Inputs:
+\\     A: the first global tile (under 256)
+\\     X: how many
+\\
+\\ Outputs:
+\\     GlobalToLocal, LocalToGlobal: theirs
+\\     A, X, Y: corrupted
+
+.give_tiles
+{
+    ZA_AUTO1 left                       ; local: tiles still to give
+
+    STX left
+    STA gid
+    LDA #0:STA gid+1
+.one
+    JSR local_tile
+    INC gid
+    DEC left:BNE one
+    RTS
+}
+
+\\ The barrier (the CPC's &38AD): the barrier's tile from the cell under its emitter down, while the cell below is
+\\ open; its cells solid.
+\\
+\\ Inputs:
+\\     barrierrow, barriercol: the emitter (row &FF: none)
+\\
+\\ Outputs:
+\\     TileMap, CellMap: the barrier's cells
+\\     A, Y: corrupted
+
+.barrier
+{
+    LDA barrierrow:BMI none
+.cell
+    CLC:ADC #1:STA barrierrow
+    JSR row_of
+    LDY barriercol
+    LDA #TileBarrier:STA (row),Y
+    LDA row+1:CLC:ADC #3:STA row+1      ; (the cell map's row)
+    LDA #1:STA (row),Y
+    LDA barrierrow:CMP #PlayRows-1:BCS none ; (the playfield's last row: no lower)
+    TYA:ADC #32:TAY                     ; (C clear) the cell below
+    LDA (row),Y:BNE none
+    LDA barrierrow:BPL cell             ; (always: a row's under 128)
+    ZA_UNREACHABLE
+.none
+    RTS
+}
+
+\\ The zone's tiles from the unpacked set (at TilesOrg, 16 bytes a global tile) to LocalTiles.
+\\
+\\ Inputs:
+\\     LocalToGlobalLo, LocalToGlobalHi: the zone's tiles, to freetile
+\\
+\\ Outputs:
+\\     LocalTiles: theirs
+\\     A, X, Y: corrupted
+
+.copy_tiles
+{
+    ZA_AUTO2 from, to                   ; local: a tile in the set, and its place in LocalTiles
+
+    LDX #0
+.tile
+    LDA LocalToGlobalLo,X:LSR A:LSR A:LSR A:LSR A:STA from+1
+    LDA LocalToGlobalHi,X:ASL A:ASL A:ASL A:ASL A
+    ORA from+1:CLC:ADC #HI(TilesOrg):STA from+1 ; the global tile × 16, high byte
+    LDA LocalToGlobalLo,X:ASL A:ASL A:ASL A:ASL A:STA from
+    TXA:ASL A:ASL A:ASL A:ASL A:STA to
+    TXA:LSR A:LSR A:LSR A:LSR A
+    CLC:ADC #HI(LocalTiles):STA to+1
+    LDY #15
+.byte
+    LDA (from),Y:STA (to),Y
+    DEY:BPL byte
+    INX:CPX freetile:BNE tile
+    RTS
+}
+ASSERT LO(TilesOrg) == 0 AND LO(LocalTiles) == 0, "the tile sets on page boundaries"
+
+\\ The playfield drawn from the tile map, every cell (the blank too, so nothing needs clearing first). A cell's 16
+\\ bytes are consecutive on the screen and in its tile, and the cells run in the screen's order: cell n at
+\\ ScreenAddr + 16n.
+\\
+\\ Inputs:
+\\     TileMap, LocalTiles: the zone's
+\\
+\\ Outputs:
+\\     the playfield drawn
+\\     A, X, Y: corrupted
+
+.draw_playfield
+{
+    ZA_AUTO2 to, from, map              ; local: the cell on the screen, its tile, its tile number
+
+    LDA #LO(ScreenAddr):STA to
+    LDA #HI(ScreenAddr):STA to+1
+    LDA #LO(TileMap):STA map
+    LDA #HI(TileMap):STA map+1
+    LDY #0
+.cell
+    LDA (map),Y:TAX
+    ASL A:ASL A:ASL A:ASL A:STA from
+    TXA:LSR A:LSR A:LSR A:LSR A
+    CLC:ADC #HI(LocalTiles):STA from+1
+    LDY #15
+.byte
+    LDA (from),Y:STA (to),Y
+    DEY:BPL byte
+    INY                                 ; (Y = 0)
+    INC map:BNE @+
+    INC map+1
+.@
+    LDA to:CLC:ADC #16:STA to
+    BCC cell
+    INC to+1
+    LDA to+1:CMP #HI(StatusAddr):BNE cell
+    RTS
+}
+ASSERT StatusAddr - ScreenAddr == PlayRows * 32 * 16, "the playfield is its cells' 16 bytes each, in order"
+
+\\ The unpacker, for the zones' data and the tiles
+
+.zunpack
+{
+    INCLUDE "dzx02.6502"
+}
+
+\\ The zones' data and the tiles, each packed to unpack into the screen (D21)
+
+.zones_packed
+SECTION ZoneData, org = ZoneDataOrg, transform = "zx02"
+    INCLUDE "../build/gen/zones.6502"
+ENDSECTION
+.tiles_packed
+SECTION TileData, org = TilesOrg, transform = "zx02"
+    INCBIN "../build/gen/tiles.bin"
+ENDSECTION

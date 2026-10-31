@@ -268,6 +268,21 @@ counted with Teddy Boy's `zx02.py`):
   ninth value. They're 19% of the player's opaque pixels.
 - So: frames stored in the plotter's column order, dithered at build time. Standard ZX02 (D16).
 
+### P13. The zone change's speed: keep the zones and tiles unpacked in the code's bank (2026-10-31, Claude)
+Measured in jsbeeb (`tools/check_zones.mjs`; the viewer, all 125 zones byte-exact): `zone_enter` takes 599-647
+ms (median 620), against the CPC's 190-273 ms (median 230). Of zone 0's: unpacking the zones' data (6,031
+bytes) 194 ms, unpacking the tiles (7,872 bytes) 246 ms (ZX02 at about 62 cycles a byte on this data), drawing
+112 ms, copying the zone's tiles out 13-33 ms, the scripts 26-40 ms, the rest about 23.
+- **(a) Both kept unpacked in the code's bank**, 13.9K against 7.1K packed: no unpacking and no copy-out (the
+  playfield drawn from the bank's tiles, so LocalTiles' 3.1K of main RAM goes). About 140-170 ms: faster than
+  the CPC. Costs about 6.8K more of the bank (the bank then nearly all zones), frees 3.1K of main RAM.
+- **(b) The zones' data unpacked (+2.5K), the tiles packed by block set** and only the zone's sets unpacked: the
+  21 sets packed one by one are 3,950 bytes (3,498 in one stream); a zone needs 672-3,520 bytes of whole sets
+  (median 1,824). About 250 ms, the CPC's.
+- **(c) As now**: 620 ms, the smallest.
+- Claude recommends (a): it beats the CPC's pause, and frees main RAM, the scarcer memory. Either way the draw
+  can lose some of its 112 ms.
+
 ---
 
 ## Open
