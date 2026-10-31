@@ -5,6 +5,7 @@
 #   make release MSG="what's new"
 #                  the disc to the site (SITE/beeb/exolon.ssd), committed there alone with this repo's commit
 #                  named, and pushed
+#   make bench     build/bench.ssd: the plotter timed over the original's plots (tools/bench.mjs)
 #   make clean
 #
 # The data (build/gen) comes from the CPC disc, docs/exolon.dsk (git-ignored), through tools/gendata.py and
@@ -25,7 +26,8 @@ TITLE := $(shell date +%y%m%d-%H%M)
 SRC = src/boot.6502 src/exolon.6502
 GENOUT = $(GEN)/pens.6502
 ZONEOUT = $(GEN)/scripts.6502 $(GEN)/lists.6502 $(GEN)/tilesets.6502 $(GEN)/tiles.6502 $(GEN)/tiles.bin
-DEPS = $(wildcard src/*.6502) $(GENOUT) $(ZONEOUT)
+SPROUT = $(GEN)/sprites.6502 $(GEN)/sprites.bin
+DEPS = $(wildcard src/*.6502) $(GENOUT) $(ZONEOUT) $(SPROUT)
 
 all: $(BUILD)/exolon.ssd
 
@@ -35,8 +37,17 @@ $(GENOUT) &: tools/gendata.py tools/cpc.py tools/cpcdsk.py $(DSK) | $(BUILD)
 $(ZONEOUT) &: tools/genzones.py tools/gendata.py tools/cpc.py tools/cpcdsk.py $(DSK) | $(BUILD)
 	$(PY) tools/genzones.py $(GEN)
 
+$(SPROUT) &: tools/gensprites.py tools/gendata.py tools/cpc.py tools/cpcdsk.py $(DSK) | $(BUILD)
+	$(PY) tools/gensprites.py $(GEN)
+
 $(BUILD)/exolon.ssd: $(DEPS) | $(BUILD)
 	$(BARON) -v --symbols $(BUILD)/exolon.json -o $@ --title $(TITLE) --opt 2 $(SRC) > $(BUILD)/exolon.lst
+
+# the plotter's benchmark: the original's plots replayed (tools/bench.mjs)
+bench: $(BUILD)/bench.ssd
+
+$(BUILD)/bench.ssd: $(DEPS) | $(BUILD)
+	$(BARON) -v -D BENCH=TRUE --symbols $(BUILD)/bench.json -o $@ --title BENCH --opt 2 $(SRC) > $(BUILD)/bench.lst
 
 $(BUILD):
 	mkdir -p $@
@@ -54,4 +65,4 @@ release: $(BUILD)/exolon.ssd
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all release clean
+.PHONY: all bench release clean

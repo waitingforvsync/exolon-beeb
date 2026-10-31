@@ -187,6 +187,10 @@ block into smaller compressed blocks, unpack whichever one has the zone data we 
 Rich: "The important performance aspect is the sprite plotting. Exolon has spectacular looking explosions which i
 would like to do well on this version"
 
+### D35. Faithful explosions at a steady 25 (2026-10-31)
+Rich: "go ahead, faithful explosions at a steady 25 is fine"
+- The original's debris, small and big explosions as they are, with no slowdown or flicker at 25 passes a second.
+
 ---
 
 ## Proposed

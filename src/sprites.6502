@@ -1,0 +1,494 @@
+\\ sprites.6502 - the sprites (tools/gensprites.py) and the plotter that reads them, in the data's bank (P9, D30-D32).
+\\ A large sprite (the 32- and 16-line sets) has its dirty edges cleared in phase 1 and its new rectangle drawn in
+\\ phase 2: stored straight over empty cells, behind the screen's bit-3 pixels (the map's) over any other. The
+\\ 8-line set is XORed (D10). Everything goes a band at a time: a character row's lines of a rectangle, each
+\\ column of it unrolled over the band's lines, one Y for the sprite and the screen (as Chase H.Q.'s plotter).
+
+INCLUDE "../build/gen/sprites.6502"     ; the sprites and their tables (tools/gensprites.py)
+
+MaxSlots = 16                           ; large sprites on the screen at once (11 at most seen: 10 and the player)
+
+SECTION Workspace
+.SlotX                                  ; a large sprite's rectangle as drawn: byte column, line, bytes, lines
+    SKIP MaxSlots                       ; (SlotW 0: nothing drawn)
+.SlotY
+    SKIP MaxSlots
+.SlotW
+    SKIP MaxSlots
+.SlotH
+    SKIP MaxSlots
+ENDSECTION
+
+SECTION DataVars
+.Keep                                   ; a screen byte's bit-3 pixels (the map's), the rest 0 (made by the loader)
+    SKIP 256
+.Hole                                   ; the pixels without bit 3: where a sprite shows
+    SKIP 256
+ENDSECTION
+ASSERT LO(Keep) == 0 AND Hole == Keep + 256, "Keep and Hole on pages"
+
+\\ The band walker's state
+
+ZA_AUTO1 rx, ry, rw, rh                 ; the rectangle: byte column, line, bytes, lines
+ZA_AUTO2 src                            ; the sprite's data: its band 0 (draws, XOR)
+ZA_AUTO1 sw                             ; its bands' width in bytes: 8 × sw apart (draws, XOR)
+ZA_AUTO1 mode                           ; ModeDraw, ModeClear or ModeXor
+ZA_AUTO2 srca, srcb                     ; the steps' sprite pointers: the band above, and the band, so (p),Y reads
+                                        ; column k line l at Y = 8k + l
+ZA_AUTO2 scr                            ; the steps' screen pointer: the band's character row at rx
+
+ModeDraw = 0                            ; a sprite stored straight, or behind the map's pixels
+ModeClear = 2                           ; every pixel cleared but the map's
+ModeXor = 4                             ; a sprite XORed
+
+\\ Walk a rectangle a band at a time and do the mode's work on each. A band is a character row's lines of it; Y
+\\ is 8k + l for its column k, line l, on the screen and in the sprite alike, so a whole band's columns run
+\\ through the unrolled steps with no realigning: only the first and last bands, entered at their first line
+\\ and left after their last (a JMP patched over the next step), realign Y each column. A sprite line l lines
+\\ into a band comes from the sprite's band above for l below the sprite's phase (its top line AND 7), else
+\\ from its band: the steps' operands are patched for the phase. Rows below the playfield are left alone:
+\\ sprites hide behind the status rows.
+\\
+\\ Inputs:
+\\     rx, ry, rw, rh: the rectangle (on the screen: the caller clips it), rw and rh not 0
+\\     mode: what to do
+\\     src, sw: the sprite's data and its width as stored (ModeDraw, ModeXor)
+\\
+\\ Outputs:
+\\     rx, ry, rw, rh, mode: preserved
+\\     A, X, Y: corrupted
+
+.walk
+{
+    ZA_AUTO1 phase                      ; local: ry AND 7
+    ZA_AUTO2 band                       ; local: the sprite's band for the next screen band
+    ZA_AUTO1 stride                     ; local: 8 × sw
+    ZA_AUTO1 line, left                 ; local: the next band's first line, the lines still to do
+    ZA_AUTO1 first, n                   ; local: the band's first line in its cell, and its lines
+    ZA_AUTO2 exit                       ; local: the step after the band's last, patched with a JMP (hi 0: none)
+
+    LDA ry:AND #7:STA phase
+
+    \\ the steps' operands for this phase, if they aren't already (the clears read no sprite)
+
+    LDX mode
+    CPX #ModeClear:BEQ phased
+    CMP StepsPhase,X:BEQ phased
+    JSR set_phase
+.phased
+
+    LDA src:STA band
+    LDA src+1:STA band+1
+    LDA sw:ASL A:ASL A:ASL A:STA stride
+    LDA ry:STA line
+    LDA rh:STA left
+
+    \\ a band: its row, lines, screen and sprite pointers
+
+.nextband
+    LDA line:LSR A:LSR A:LSR A          ; the character row
+    CMP #PlayRows:BCC onplay
+    RTS                                 ; (the status rows: nothing below shows)
+.onplay
+    TAX
+    LDA line:AND #7:STA first
+    EOR #7:CLC:ADC #1                   ; the lines to its cell's end
+    CMP left:BCC @+
+    LDA left                            ; (the last band)
+.@
+    STA n
+    LDA rx:ASL A:ASL A:ASL A:STA scr    ; rx × 8, low byte (C: its bit 8)
+    TXA:ROL A                           ; the row × 2, and rx × 8's bit 8: the row's pages
+    ADC #HI(ScreenAddr):STA scr+1       ; (C clear: under &80)
+    LDA band:SEC:SBC phase:STA srcb
+    LDA band+1:SBC #0:STA srcb+1
+    LDA srcb:SEC:SBC stride:STA srca    ; the band above, less the phase, plus 8
+    LDA srcb+1:SBC #0:STA srca+1
+    LDA srca:CLC:ADC #8:STA srca
+    BCC @+
+    INC srca+1
+.@
+
+    \\ the step block: XOR, or for the others the band's cells: all empty, straight; else behind the map
+
+    LDA mode:CMP #ModeXor:BEQ chosen
+    LDA TileRowLo,X:STA exit            ; (exit: free here)
+    LDA TileRowHi,X:STA exit+1
+    LDA rx:CLC:ADC rw:SEC:SBC #1
+    LSR A:STA lastcell+1                ; the last cell
+    LDA rx:LSR A:TAY                    ; the first
+.cell
+    LDA (exit),Y:BNE behind
+    INY
+.lastcell
+    CPY #0:BCC cell:BEQ cell            ; self-modified: the last cell
+    LDA mode:BPL chosen                 ; (always: the straight block, mode's own number)
+    ZA_UNREACHABLE
+.behind
+    LDA mode:ORA #1                     ; (the behind block: mode + 1)
+.chosen
+    ASL A:ASL A:ASL A:STA blockx+1      ; the block × 8
+    ORA first:TAX
+    LDA EntryLo,X:STA entry+1
+    LDA EntryHi,X:STA entry+2
+
+    \\ the band left after its last line: a JMP over the next step, if it's not step 7
+
+    LDA #0:STA exit+1
+    LDA first:CLC:ADC n                 ; (the step after the last)
+    CMP #8:BCS noexit
+.blockx
+    ORA #0:TAX                          ; self-modified: the block × 8
+    LDA EntryLo,X:STA exit
+    LDA EntryHi,X:STA exit+1
+    LDY #2
+.save
+    LDA (exit),Y:STA ExitSaved,Y
+    LDA ExitJmp,Y:STA (exit),Y
+    DEY:BPL save
+.noexit
+
+    \\ Y's realignment at each column's end, the band's end, and in
+
+    LDA #8:SEC:SBC n:STA realign+1      ; 8 - the lines: from after the last to the next column's first
+    LDA rw:ASL A:ASL A:ASL A
+    CLC:ADC first:STA colend+1          ; 8 × rw + first: Y after the last column
+    LDY first
+    LDA #0                              ; (the clears' A)
+.entry
+    JMP &FFFF                           ; self-modified: the block's first step
+    ZA_CANJUMP StepsDraw, StepsDrawBehind, StepsClear, StepsClearBehind, StepsXor
+
+    \\ a column done: Y on to the next column's first step; the band's end; or the column
+
+.stepsdone
+    TYA:CLC
+.realign
+    ADC #0:TAY                          ; self-modified: first + 7 - last
+.colend
+    CPY #0:BEQ banddone                 ; self-modified: Y after the last column
+    LDA #0                              ; (the clears' A)
+    JMP (entry+1)                       ; (the block's first step again)
+    ZA_CANJUMP StepsDraw, StepsDrawBehind, StepsClear, StepsClearBehind, StepsXor
+
+.banddone
+    LDA exit+1:BEQ @+                   ; the step under the patched JMP put back
+    LDY #2
+.restore
+    LDA ExitSaved,Y:STA (exit),Y
+    DEY:BPL restore
+.@
+    LDA band:CLC:ADC stride:STA band    ; the sprite's next band
+    BCC @+
+    INC band+1
+.@
+    LDA line:CLC:ADC n:STA line
+    LDA left:SEC:SBC n:STA left
+    BEQ done
+    JMP nextband
+.done
+    RTS
+}
+ASSERT LO(walk.entry + 1) <> &FF, "JMP (ind)'s pointer can't end a page on an NMOS 6502"
+
+\\ The steps' operands for a phase: steps 0 to phase - 1 read srca (the sprite's band above), the rest srcb.
+\\
+\\ Inputs:
+\\     A: the phase, 0-7
+\\     X: the mode, ModeDraw or ModeXor (whose blocks read the sprite)
+\\
+\\ Outputs:
+\\     StepsPhase: the mode's, A
+\\     A, X, Y: corrupted
+
+.set_phase
+{
+    ZA_AUTO1 phase                      ; local: the phase
+
+    STA phase
+    STA StepsPhase,X
+    CPX #ModeXor:BEQ xorphase
+    LDA #srcb
+FOR k = 0..7
+    STA StepsDraw + 5 * k + 1:STA StepsDrawBehind + 14 * k + 4
+NEXT
+    LDA #srca
+    LDX phase
+    LDY DrawPhaseLo,X:STY patched+1
+    LDY DrawPhaseHi,X:STY patched+2
+.patched
+    JMP &FFFF                           ; self-modified: into the list below, so steps phase - 1 to 0 get srca
+    ZA_CANJUMP drawphase
+.drawphase
+FOR k = 7..0
+    STA StepsDraw + 5 * k + 1:STA StepsDrawBehind + 14 * k + 4
+NEXT
+    RTS
+.xorphase
+    LDA #srcb
+FOR k = 0..7
+    STA StepsXor + 7 * k + 1
+NEXT
+    LDA #srca
+    LDX phase
+    LDY XorPhaseLo,X:STY xpatched+1
+    LDY XorPhaseHi,X:STY xpatched+2
+.xpatched
+    JMP &FFFF                           ; self-modified: into the list below
+    ZA_CANJUMP xorphasesteps
+.xorphasesteps
+FOR k = 7..0
+    STA StepsXor + 7 * k + 1
+NEXT
+    RTS
+}
+
+.ExitJmp                                ; the JMP patched over the step after a band's last
+    JMP walk.stepsdone
+.ExitSaved                              ; the step's bytes it covers
+    SKIP 3
+.StepsPhase                             ; the phase the steps' operands are set for: ModeDraw's, ModeXor's
+    EQUB &FF, 0, 0, 0, &FF
+.DrawPhaseLo                            ; where ModeDraw's operand list starts for a phase: steps phase - 1 to 0
+    EQUB LO(set_phase.drawphase + 6 * (8 - (0..7)))
+.DrawPhaseHi
+    EQUB HI(set_phase.drawphase + 6 * (8 - (0..7)))
+.XorPhaseLo
+    EQUB LO(set_phase.xorphasesteps + 3 * (8 - (0..7)))
+.XorPhaseHi
+    EQUB HI(set_phase.xorphasesteps + 3 * (8 - (0..7)))
+ASSERT set_phase.xorphase - set_phase.drawphase == 6 * 8 + 1, "the draws' operand list: 6 bytes a step"
+
+\\ The steps: each block 8 of them, unrolled, on to stepsdone. In order: ModeDraw (straight), ModeDraw behind
+\\ the map, ModeClear (straight), ModeClear behind the map, ModeXor. The sprite pointers' operands are patched
+\\ for the phase (walk).
+
+.StepsDraw
+FOR k = 0..7
+    LDA (srcb),Y:STA (scr),Y:INY
+NEXT
+    JMP walk.stepsdone
+.StepsDrawBehind
+FOR k = 0..7
+    LDA (scr),Y:TAX
+    LDA (srcb),Y:AND Hole,X:ORA Keep,X
+    STA (scr),Y:INY
+NEXT
+    JMP walk.stepsdone
+.StepsClear
+FOR k = 0..7
+    STA (scr),Y:INY                     ; (A = 0)
+NEXT
+    JMP walk.stepsdone
+.StepsClearBehind
+FOR k = 0..7
+    LDA (scr),Y:TAX
+    LDA Keep,X:STA (scr),Y:INY
+NEXT
+    JMP walk.stepsdone
+.StepsXor
+FOR k = 0..7
+    LDA (srcb),Y:EOR (scr),Y:STA (scr),Y:INY
+NEXT
+    JMP walk.stepsdone
+
+.EntryLo                                ; each block's step k, 8 a block
+    EQUB LO(StepsDraw + 5 * (0..7)), LO(StepsDrawBehind + 14 * (0..7))
+    EQUB LO(StepsClear + 3 * (0..7)), LO(StepsClearBehind + 9 * (0..7))
+    EQUB LO(StepsXor + 7 * (0..7))
+.EntryHi
+    EQUB HI(StepsDraw + 5 * (0..7)), HI(StepsDrawBehind + 14 * (0..7))
+    EQUB HI(StepsClear + 3 * (0..7)), HI(StepsClearBehind + 9 * (0..7))
+    EQUB HI(StepsXor + 7 * (0..7))
+ASSERT StepsDrawBehind - StepsDraw == 5 * 8 + 3 AND StepsClear - StepsDrawBehind == 14 * 8 + 3, "step sizes"
+ASSERT StepsClearBehind - StepsClear == 3 * 8 + 3 AND StepsXor - StepsClearBehind == 9 * 8 + 3, "step sizes"
+
+.TileRowLo                              ; the tile map's row r
+    EQUB LO(TileMap + 32 * (0..PlayRows-1))
+.TileRowHi
+    EQUB HI(TileMap + 32 * (0..PlayRows-1))
+
+\\ A sprite's rectangle on the screen: columns past the right edge dropped. (Nothing goes left of x 0 or above
+\\ line 0; lines below the playfield are walk's to leave.)
+\\
+\\ Inputs:
+\\     X: the sprite
+\\     A: its x (MODE 0 pixels, 0-127: the sprite's shift its own), Y: its y (lines)
+\\
+\\ Outputs:
+\\     rx, ry, rw, rh: the rectangle (rw 0: nothing)
+\\     src, sw: its data and its width as stored
+\\     X: preserved; A, Y: corrupted
+
+.sprite_rect
+{
+    LSR A:CLC:ADC SprDX,X:STA rx        ; the first byte column
+    TYA:CLC:ADC SprDY,X:STA ry
+    LDA SprH,X:STA rh
+    LDA SprLo,X:STA src
+    LDA SprHi,X:STA src+1
+    LDA SprW,X:BEQ none                 ; (a blank frame)
+    STA rw:STA sw
+    LDA rx:CMP #ScreenColumns:BCS none  ; (right of the screen)
+    ADC rw:SBC #ScreenColumns-1         ; (C clear) the columns past the edge, if positive
+    BMI fits:BEQ fits
+    EOR #&FF:SEC:ADC rw:STA rw          ; rw less them
+.fits
+    RTS
+.none
+    LDA #0:STA rw
+    RTS
+}
+
+\\ Phase 1 for a large sprite: the bytes of its last rectangle that its new one won't cover, cleared of every
+\\ pixel but the map's.
+\\
+\\ Inputs:
+\\     Y: its slot
+\\     rx, ry, rw, rh: its new rectangle (rw 0: none: the old cleared whole)
+\\
+\\ Outputs:
+\\     A, X, Y: corrupted
+
+.large_edges
+{
+    ZA_AUTO1 slot                       ; local: the slot
+    ZA_AUTO1 nx, ny, nx2, ny2           ; local: the new rectangle: its left, top, and right and bottom (past)
+    ZA_AUTO1 ox, oy, ox2, oy2           ; local: the old's
+    ZA_AUTO1 ys                         ; local: the first row both cover
+
+    STY slot
+    LDA SlotW,Y:BNE drawn
+    RTS                                 ; (nothing drawn)
+.drawn
+    LDA rw:BEQ whole                    ; (no new one)
+    LDA rx:STA nx:CLC:ADC rw:STA nx2
+    LDA ry:STA ny:CLC:ADC rh:STA ny2
+    LDA SlotX,Y:STA ox:CLC:ADC SlotW,Y:STA ox2
+    LDA SlotY,Y:STA oy:CLC:ADC SlotH,Y:STA oy2
+
+    \\ apart: the old cleared whole
+
+    LDA nx:CMP ox2:BCS whole
+    LDA ox:CMP nx2:BCS whole
+    LDA ny:CMP oy2:BCS whole
+    LDA oy:CMP ny2:BCC pieces           ; (overlapping)
+.whole
+    LDA SlotX,Y:STA rx
+    LDA SlotY,Y:STA ry
+    LDA SlotW,Y:STA rw
+    LDA SlotH,Y:STA rh
+    LDA #ModeClear:STA mode
+    JMP walk                            ; (and back)
+
+    \\ the rows above the new one, and below it, every old column
+
+.pieces
+    LDA #ModeClear:STA mode
+    LDA ox:STA rx
+    LDA ox2:SEC:SBC ox:STA rw
+    LDA ny:CMP oy:BEQ notop:BCC notop
+    SBC oy:STA rh                       ; (C set)
+    LDA oy:STA ry
+    JSR walk
+.notop
+    LDA oy2:CMP ny2:BEQ nobottom:BCC nobottom
+    SBC ny2:STA rh                      ; (C set)
+    LDA ny2:STA ry
+    JSR walk
+.nobottom
+
+    \\ the rows both cover: the columns left of the new one, and right of it
+
+    LDA oy:CMP ny:BCS @+
+    LDA ny
+.@
+    STA ys:STA ry
+    LDA oy2:CMP ny2:BCC @+
+    LDA ny2
+.@
+    SEC:SBC ys:STA rh
+    LDA nx:CMP ox:BEQ noleft:BCC noleft
+    SBC ox:STA rw                       ; (C set)
+    LDA ox:STA rx
+    JSR walk
+.noleft
+    LDA ox2:CMP nx2:BEQ done:BCC done
+    SBC nx2:STA rw                      ; (C set)
+    LDA nx2:STA rx
+    JMP walk                            ; (and back)
+.done
+    RTS
+}
+
+\\ Phase 2 for a large sprite: its new rectangle drawn, and kept as its slot's.
+\\
+\\ Inputs:
+\\     Y: its slot
+\\     rx, ry, rw, rh, src, sw: its new rectangle and data (rw 0: none)
+\\
+\\ Outputs:
+\\     SlotX, SlotY, SlotW, SlotH: its slot's
+\\     A, X, Y: corrupted
+
+.large_draw
+{
+    LDA rx:STA SlotX,Y
+    LDA ry:STA SlotY,Y
+    LDA rh:STA SlotH,Y
+    LDA rw:STA SlotW,Y:BEQ none
+    LDA #ModeDraw:STA mode
+    JMP walk                            ; (and back)
+.none
+    RTS
+}
+
+\\ An 8-line sprite XORed: on, or off again.
+\\
+\\ Inputs:
+\\     X: the sprite
+\\     A: its x, Y: its y
+\\
+\\ Outputs:
+\\     A, X, Y: corrupted
+
+.xor_plot
+{
+    JSR sprite_rect
+    LDA rw:BEQ none
+    LDA #ModeXor:STA mode
+    JMP walk                            ; (and back)
+.none
+    RTS
+}
+
+\\ The tables the plotter reads: Keep (a byte's bit-3 pixels) and Hole (the others' bits), for every byte.
+\\
+\\ Inputs:
+\\     the data's bank paged in
+\\
+\\ Outputs:
+\\     Keep, Hole
+\\     A, X, Y: corrupted
+
+.make_sprite_tables
+{
+    LDX #0
+.byte
+    LDY #0                              ; (the bits kept: &AA the left pixel's, &55 the right's)
+    TXA:BPL @+
+    LDY #&AA
+.@
+    TXA:AND #&40:BEQ @+
+    TYA:ORA #&55:TAY
+.@
+    TYA:EOR #&FF:STA Hole,X
+    TYA:STX keepx:AND keepx:STA Keep,X
+    INX:BNE byte
+    RTS
+}
+ZA_AUTO1 keepx                          ; make_sprite_tables': the byte
+
+IF DEFINED(BENCH)
+    INCLUDE "bench.6502"                ; the plotter timed over the original's plots
+ENDIF

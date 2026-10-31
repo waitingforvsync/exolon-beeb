@@ -9,7 +9,8 @@
 \\          unpacked for the zone in play
 \\   &5000  the screen: 22 rows of playfield, then the status's 2 at &7C00 (D9). EXO2 loads here: main RAM's
 \\          code packed by ZX02, then its loader; all of it drawn over once the game's started
-\\   &8000  sideways RAM: each routine in the bank with the data it reads (Teddy Boy's rule)
+\\   &8000  sideways RAM: each routine in the bank with the data it reads (Teddy Boy's rule). The code's bank: the
+\\          zones; the data's: the sprites and their plotter, its tables at the top (DataVars, &BE00)
 
 ZA_POOL &02..&FB, &FD..&FF              ; &FC: the MOS's IRQ entry saves A there
 
@@ -30,6 +31,7 @@ LoadFloor = ScreenAddr                  ; EXO2 loads no lower: main RAM's code u
 BankLoad = &3000                        ; where !BOOT loads a bank's packed file (boot.6502's)
 SwramOrg = &8000
 SwramEnd = &C000
+DataVarsOrg = &BE00                     ; the data's bank's own workspace (DataVars): the plotter's tables
 
 ASSERT MainCodeOrg == StackTop + 1, "main RAM's code starts straight after the stack"
 ASSERT ScreenAddr + ScreenRows * RowBytes == &8000, "the screen fills to &8000: no hardware wrap"
@@ -37,4 +39,7 @@ ASSERT LO(ScreenAddr DIV 8) == 0, "R13 is 0"
 ASSERT StatusAddr == &7C00, "the status rows at &7C00"
 
 SECTION Workspace, org = WorkspaceOrg, guard = ScreenAddr, virtual = TRUE
+ENDSECTION
+
+SECTION DataVars, org = DataVarsOrg, guard = SwramEnd, virtual = TRUE
 ENDSECTION

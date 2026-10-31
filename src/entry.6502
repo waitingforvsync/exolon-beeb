@@ -58,9 +58,12 @@
     DEX
     BPL palette
 
-    \\ the code's bank paged in for good (no OS to tell); main RAM's code unpacked
+    \\ the plotter's tables made in the data's bank; the code's bank paged in for good (no OS to tell); main
+    \\ RAM's code unpacked
 
-    LDA bankcode:STA &FE30              ; ROMSEL
+    LDA bankdata:STA &FE30              ; ROMSEL: the data's bank, for the plotter's tables
+    JSR make_sprite_tables
+    LDA bankcode:STA &FE30              ; ROMSEL: the code's, for good
     LDA #LO(maincode_image):STA zx.src
     LDA #HI(maincode_image):STA zx.src+1
     LDA #LO(MainCodeOrg):STA zx.dst

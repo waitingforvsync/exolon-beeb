@@ -194,3 +194,27 @@ O7-O14 (`docs/decisions.md`).
   its tiles are from (each local tile notes its set). The drawing stores zeros for blank cells.
 - `tools/check_zones.mjs`: 125 of 125 zones byte-exact; `zone_enter` 182-337 ms, median 244 (was 599-647, 620;
   the CPC's 190-273, 230). The code's bank: 10,682 bytes (9,007 packed on the disc).
+
+### Phase 2: the sprite plotter, first version, and its benchmark
+- D35: faithful explosions at a steady 25. Rich on the layout: "check that column-major is the best way"; on bit 3:
+  only the map's (as P10), and overlaps to be tracked and drawn differently (to come).
+- `tools/gensprites.py`: the three sets' frames trimmed to their byte-aligned bounding rectangles for each shift,
+  dithered (fixed to the sprite), in the screen's own cell layout: band j (lines 8j to 8j + 7) is the columns'
+  8 bytes each, so column k line l is at 8k + l as on the screen. 158 sprites; 15,152 bytes with every frame,
+  9,984 with the suit's, the title's twinkles and three unused frames left out for now (packs to come).
+- The layout chosen by a model over the logged plots (zones 0, 38, 94, 99, 1,599 passes): column-major with a
+  realign every column (as Chase H.Q.'s) median 19,944 cycles a pass, max 106,630; the cell layout with two
+  pointers 17,062, 95,324; the cell layout writing whole cells 23,183, 108,956.
+- `src/sprites.6502` (the data's bank): `walk` does a rectangle a band at a time, Y = 8k + l on the screen and
+  in the sprite, the steps' operands patched for the sprite's phase (the band above for lines under it), so a
+  whole band needs no realigning; the first and last bands are entered at their first line and left after
+  their last by a JMP patched over the next step. Five unrolled step blocks: draw straight, draw behind the map
+  (`Keep`/`Hole`, made by the loader), clear straight, clear behind the map, XOR. `large_edges` (phase 1: the
+  old rectangle less the new, cleared), `large_draw` (phase 2), `xor_plot`.
+- `tools/benchlog.py` turns the CPC's plot log into the plotter's commands; `make bench` and `tools/bench.mjs`
+  replay them in headless jsbeeb, the host writing each pass's commands before it starts. Zone 0, 380 passes of
+  random play: plotting median 9,458 cycles a pass, 90% 35,676, 99% 90,128, max 116,315; 34 passes over 40,000.
+  The screen looks right (the player clean and dithered, shots and explosions XORed).
+- The worst pass is 104 8-line XORs (52 debris, off and on): about 1,100 cycles a plot, 430 of them bytes. The
+  rest is the general walker's set-up (the phase patch, two bands, the exit patch). The debris needs its own
+  path.

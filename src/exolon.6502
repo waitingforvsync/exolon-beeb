@@ -17,8 +17,8 @@ SECTION CodeFile, filename = "EXOC", load = &FFFF0000+BankLoad
 ENDSECTION
 
 SECTION DataFile, filename = "EXOD", load = &FFFF0000+BankLoad
-    SECTION SwramData, org = SwramOrg, guard = SwramEnd, transform = "zx02"
-        EQUS "Exolon's graphics and their plotters" ; (to come: Phase 2)
+    SECTION SwramData, org = SwramOrg, guard = DataVarsOrg, transform = "zx02"
+        INCLUDE "sprites.6502"          ; the sprites and their plotter
     ENDSECTION
 ENDSECTION
 

@@ -1,0 +1,75 @@
+\\ bench.6502 - the plotter timed over the original's plots (tools/bench.mjs, a build with BENCH defined): each
+\\ pass, the host writes the pass's commands into CmdBuf, made from the CPC's plot log by tools/benchlog.py.
+\\
+\\ A command is a byte and its operands; 0 ends the list. Phase 1's come first, then phase 2's:
+\\     1 slot sprite x y: phase 1 for a large sprite going to its new place: its dirty edges cleared
+\\     2 slot sprite x y: phase 2: it drawn there
+\\     3 slot: phase 1: it gone, its rectangle cleared
+\\     4 sprite x y: an 8-line sprite XORed (off in phase 1, on in phase 2)
+
+CmdBufSize = 1024
+
+SECTION Workspace
+.CmdBuf
+    SKIP CmdBufSize
+ENDSECTION
+
+\\ A pass's commands.
+\\
+\\ Inputs:
+\\     CmdBuf: the pass's commands
+\\
+\\ Outputs:
+\\     A, X, Y: corrupted
+
+.bench_pass
+{
+    ZA_AUTO2 cmd                        ; local: the next command
+    ZA_AUTO1 op, slot, bx               ; local: its operands
+
+    LDA #LO(CmdBuf):STA cmd
+    LDA #HI(CmdBuf):STA cmd+1
+.next
+    LDY #0
+    LDA (cmd),Y:BEQ done
+    STA op
+    CMP #3:BEQ gone
+    CMP #4:BEQ xor
+
+    \\ 1 or 2: a large sprite's edges, or it drawn
+
+    INY:LDA (cmd),Y:STA slot
+    INY:LDA (cmd),Y:TAX
+    INY:LDA (cmd),Y:STA bx
+    INY:LDA (cmd),Y:TAY
+    LDA bx:JSR sprite_rect
+    LDY slot
+    LDA op:CMP #1:BEQ edges
+    JSR large_draw
+    LDA #5:BNE on                       ; (always)
+.edges
+    JSR large_edges
+    LDA #5:BNE on                       ; (always)
+.gone
+    INY:LDA (cmd),Y:TAY
+    LDA #0:STA rw
+    STY slot
+    JSR large_edges                     ; (no new one: the old cleared whole)
+    LDY slot
+    LDA #0:STA SlotW,Y
+    LDA #2:BNE on                       ; (always)
+.xor
+    INY:LDA (cmd),Y:TAX
+    INY:LDA (cmd),Y:STA bx
+    INY:LDA (cmd),Y:TAY
+    LDA bx:JSR xor_plot
+    LDA #4
+.on
+    CLC:ADC cmd:STA cmd
+    BCC next
+    INC cmd+1
+    BCS next                            ; (always)
+    ZA_UNREACHABLE
+.done
+    RTS
+}

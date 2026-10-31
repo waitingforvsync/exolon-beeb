@@ -14,6 +14,39 @@ TitleSeed = &6512                       ; the CPC's seed at every zone's set-up 
 \\ Outputs:
 \\     none: it never returns
 
+IF DEFINED(BENCH)
+
+\\ The benchmark (bench.6502): the zone the host chose drawn, then each pass the host's commands run.
+\\
+\\ Inputs:
+\\     zone: the zone (tools/bench.mjs writes it at game)
+\\
+\\ Outputs:
+\\     none: it never returns
+
+.game
+{
+    LDA #LO(TitleSeed):STA seed
+    LDA #HI(TitleSeed):STA seed+1
+    LDX zone:JSR zone_enter
+    LDA #0
+    LDX #MaxSlots-1
+.slots
+    STA SlotW,X                         ; (no large sprite drawn yet)
+    DEX:BPL slots
+    LDX irqframes:INX:STX wait_pass.passframe
+.loop
+    JSR wait_pass
+.pass                                   ; (tools/bench.mjs writes the pass's commands here)
+    LDA bankdata:STA &FE30              ; ROMSEL: the data's bank
+    JSR bench_pass
+    LDA bankcode:STA &FE30              ; ROMSEL: the code's
+.passdone                               ; (and times the pass to here)
+    JMP loop
+}
+
+ELSE
+
 .game
 {
     LDA #0:STA zone
@@ -45,3 +78,5 @@ TitleSeed = &6512                       ; the CPC's seed at every zone's set-up 
     ZA_UNREACHABLE
 }
 ASSERT KeyLeft == 1 AND KeyRight == 2, "the viewer's keys: Z bit 0, X bit 1"
+
+ENDIF
