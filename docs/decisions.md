@@ -117,6 +117,17 @@ compression), which are decompressed to screen memory while blanked and just the
   data, or many sprite types, unpacks there whole, and the next zone's pieces are copied to the workspace
   before its screen is drawn.
 
+### D22. Unroll only the hot loops (2026-10-31)
+Rich, on the review's offer to unroll the IRQ's key scan: "take the approach portalc takes, a loop. (key
+scanning I mean)", and "Unrolling should be reserved for hot loops, like the sprite code. We don't have the
+luxury of memory here."
+
+### D23. Nothing assumed of A at the IRQ's entry (2026-10-31)
+Rich: "we shouldn't assume A=0 on entry. can we assume that?"
+- On OS 1.20 it holds: the IRQ vector's `&DC1C` is `STA &FC : PLA : PHA : AND #&10 : BNE : JMP (&204)`. But
+  that's the MOS's code, unchecked on MOS 3.20 and OS 2.00, for 2 cycles and 2 bytes: the handler clears A
+  itself (`LDA #0`), as Portal's does.
+
 ---
 
 ## Proposed

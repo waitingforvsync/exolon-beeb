@@ -22,7 +22,8 @@ level. Use the `beeb-baron` skill for all 6502.
 - **Don't transliterate the Z80.** Get a spec from the code and write the 6502 that suits the 6502: indexed
   tables, self-modification, unrolled hot loops. Where the original is written suboptimally, do better.
 - **Optimised from the start**: every routine as fast as it can be from its first line (the skill's
-  `optimisation.md`).
+  `optimisation.md`). But **unroll only the hot loops** (the sprite code): main RAM has no room to spare
+  (D22). Nothing relied on that the MOS happens to leave (D23).
 - **Review:** when a feature works, have a second agent review its code for optimisations.
 - **Commits:** commit and push whenever a milestone is reached that you're satisfied with.
 - **Release:** a disc worth releasing goes to `~/dev/waitingforvsync.github.io/beeb/exolon.ssd`: `make release

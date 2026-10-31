@@ -97,3 +97,5 @@ What's been done, newest last, with measurements. Decisions are in `docs/decisio
 - Measured after (headless jsbeeb, `game.loop` and the handler): the handler's first instruction at line 192
   character 7 every frame; 148 cycles from it to its RTI; passes 79,869 and 79,875 cycles alternately (2.00
   frames); X and `:` for 20 frames each moved the marker (31, 80) → (41, 60); the stack's sentinel intact.
+- The IRQ clears A itself (D23), as Portal's does, rather than rely on the MOS's entry leaving it 0: still 148
+  cycles to its RTI. Unrolling only for the hot loops (D22).

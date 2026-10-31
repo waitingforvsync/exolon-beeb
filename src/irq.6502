@@ -24,7 +24,6 @@ ASSERT LEN(GameKeys) == 5 AND KeysAll == KeyLeft + KeyRight + KeyUp + KeyDown + 
 \\ The IRQ1V handler. T1 is the only interrupt enabled, so it's the source.
 \\
 \\ Inputs:
-\\     A: 0 (the MOS's entry leaves it so: AND #&10 on the pushed flags, B clear)
 \\     &FC: A, as the MOS saved it
 \\     keys: those gathered since wait_pass took them
 \\
@@ -38,14 +37,14 @@ ASSERT LEN(GameKeys) == 5 AND KeysAll == KeyLeft + KeyRight + KeyUp + KeyDown + 
     ZA_INTERRUPT
     ZA_AUTO1 irqx, irqy                 ; local: X and Y, kept
 
-    STX irqx
-    LDX #HI(FramePeriod):STX &FE47      ; system VIA: T1L-H, the period as it was: T1 acknowledged
+    LDA #HI(FramePeriod):STA &FE47      ; system VIA: T1L-H, the period as it was: T1 acknowledged
     INC irqframes
-    STY irqy
+    STX irqx:STY irqy
 
-    \\ each key's bit rolls into A, clear if it's down, the first read ending in the top key's bit, A's own 0s
-    \\ above them; then flipped
+    \\ each key's bit rolls into A, clear if it's down, the first read ending in the top key's bit, 0s above
+    \\ them (Portal's loop); then flipped
 
+    LDA #0
     LDX #LEN(GameKeys)-1
 .key
     LDY GameKeyTable,X:STY &FE4F        ; system VIA: ORA without handshake, the key's number
