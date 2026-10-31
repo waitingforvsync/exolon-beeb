@@ -11,6 +11,27 @@
 
 CmdBufSize = 1024
 
+\\ The plotter's routines the bench calls; with BENCHNULL defined, a bare RTS, so a run times the bench's own
+\\ decoding (tools/bench.mjs's times less these are the plotting alone).
+
+IF DEFINED(BENCHNULL)
+    BenchRect = bench_null
+    BenchDraw = bench_null
+    BenchEdges = bench_null
+    BenchXorOff = bench_null
+    BenchXorOn = bench_null
+    BenchDebris = bench_null
+    BenchXor8 = bench_null
+ELSE
+    BenchRect = sprite_rect
+    BenchDraw = large_draw
+    BenchEdges = large_edges
+    BenchXorOff = large_xor_off
+    BenchXorOn = large_xor_on
+    BenchDebris = debris_xor
+    BenchXor8 = xor8
+ENDIF
+
 SECTION Workspace
 .CmdBuf
     SKIP CmdBufSize
@@ -45,31 +66,31 @@ ENDSECTION
     INY:LDA (cmd),Y:TAX
     INY:LDA (cmd),Y:STA bx
     INY:LDA (cmd),Y:TAY
-    LDA bx:JSR sprite_rect
+    LDA bx:JSR BenchRect
     LDY slot
     LDA op:CMP #1:BEQ edges
-    JSR large_draw
+    JSR BenchDraw
     LDA #5:BNE on                       ; (always)
 .edges
-    JSR large_edges
+    JSR BenchEdges
     LDA #5:BNE on                       ; (always)
 .notlarge
     BEQ gone
     CMP #5:BCC xor                      ; (4)
     BEQ xorlarge
     INY:LDA (cmd),Y:STA slot:TAY        ; 6: XORed off, gone
-    JSR large_xor_off
+    JSR BenchXorOff
     LDY slot
     LDA #0:STA SlotW,Y
     LDA #2:BNE on                       ; (always)
 .xorlarge
     INY:LDA (cmd),Y:STA slot:TAY
-    JSR large_xor_off
+    JSR BenchXorOff
     LDY #2:LDA (cmd),Y:TAX
     INY:LDA (cmd),Y:STA bx
     INY:LDA (cmd),Y:TAY
-    LDA bx:JSR sprite_rect
-    LDY slot:JSR large_xor_on
+    LDA bx:JSR BenchRect
+    LDY slot:JSR BenchXorOn
     LDA #5
 .on
     CLC:ADC cmd:STA cmd
@@ -81,7 +102,7 @@ ENDSECTION
     INY:LDA (cmd),Y:TAY
     LDA #0:STA rw
     STY slot
-    JSR large_edges                     ; (no new one: the old cleared whole)
+    JSR BenchEdges                      ; (no new one: the old cleared whole)
     LDY slot
     LDA #0:STA SlotW,Y
     LDA #2:BNE on                       ; (always)
@@ -93,12 +114,15 @@ ENDSECTION
     CPX #Sprite8+4:BEQ debris
     CPX #Sprite8+5:BNE general
 .debris
-    LDA bx:JSR debris_xor
+    LDA bx:JSR BenchDebris
     LDA #4:BNE on                       ; (always)
 .general
-    LDA bx:JSR xor8
+    LDA bx:JSR BenchXor8
     LDA #4:BNE on                       ; (always)
 .done
     RTS
 }
+
+.bench_null                             ; (BENCHNULL's plotter)
+    RTS
 

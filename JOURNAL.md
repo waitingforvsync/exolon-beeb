@@ -335,3 +335,30 @@ Plotting, cycles a pass (median / 90% / worst; passes over 40,000), the touch te
   spores; the debris is already compiled. Next: the behind-the-map draw chosen a cell at a time rather than a
   band (by cell 22-52% of the draws' bytes are over a tile, by band 52-80%; stars alone 2-25%), and the bench's
   decoding (about 70 cycles a command) brought nearer what the game's object loop will cost.
+
+### The plotting alone, and what's left in it
+- `make benchnull` builds the bench with the plotter's routines a bare RTS (`BENCHNULL`): its times are the
+  bench's own decoding, a median 400-4,000 cycles a pass and up to 14,000, which every figure so far included.
+  Taken off (the hybrid, D37):
+
+| Zone | Median | 90% | Worst | Passes over 40,000 |
+|---|---|---|---|---|
+| 0 | 6,057 | 13,150 | 38,171 | 0 |
+| 38 | 20,504 | 27,399 | 42,970 | 6 of 400 |
+| 94 | 23,217 | 45,665 | 61,413 | 57 of 400 |
+| 99 | 24,704 | 37,214 | 68,995 | 36 of 400 |
+
+- The worst passes are a grenade's debris: about 100 XORs (50 particles off and on) at about 335 cycles each (52
+  of set-up, 18 bytes at 15, the JSR and RTS), some 33,500 cycles. Debris flies in straight lines at a constant
+  velocity (dx -4 to 4 pixels, dy -8 to 8 lines, `docs/cpc-objects.md`), but an old and a new image rarely
+  overlap much and a delta for each move would be 384 variants: no gain there.
+- A profile of zone 99's worst passes (122-131): `walk`'s own code 26.6%, as much as its step blocks (about
+  30%), the debris 25%. By the listing a band costs the walk about 200 cycles besides its bytes, and zone 99
+  averages 14 walks and 29 bands a pass (11 of them dirty edges, 6 of those one or two columns wide).
+- Choosing straight or behind a cell at a time, worked out before it was written: a bitmap of 8-cell windows
+  (154 bytes, any 4 cells in one byte) tests a band in 15-23 cycles against 16-52 now, about 26 a band, but costs
+  about 40 more a walk to set up (its mask, its window): net about 200 cycles a pass in zone 99. A mixed band
+  done as runs of cells costs about 250 cycles of handling and saves 120-480: about even. Neither was kept.
+- Left in the walk: the middle bands' lines and entries worked out again each band (about 50 cycles of about
+  200), sprites kept within a page (no high byte to step, no read crossing a page; some packing waste). About
+  1,000-2,000 cycles a pass between them.

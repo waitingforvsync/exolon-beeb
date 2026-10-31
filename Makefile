@@ -26,7 +26,7 @@ TITLE := $(shell date +%y%m%d-%H%M)
 SRC = src/boot.6502 src/exolon.6502
 GENOUT = $(GEN)/pens.6502
 ZONEOUT = $(GEN)/scripts.6502 $(GEN)/lists.6502 $(GEN)/tilesets.6502 $(GEN)/tiles.6502 $(GEN)/tiles.bin
-SPROUT = $(GEN)/sprites.6502 $(GEN)/sprites.bin
+SPROUT = $(GEN)/sprites.6502 $(GEN)/sprites.bin $(GEN)/xor8code.6502
 DEPS = $(wildcard src/*.6502) $(GENOUT) $(ZONEOUT) $(SPROUT)
 
 all: $(BUILD)/exolon.ssd
@@ -49,6 +49,12 @@ bench: $(BUILD)/bench.ssd
 $(BUILD)/bench.ssd: $(DEPS) | $(BUILD)
 	$(BARON) -v -D BENCH=TRUE --symbols $(BUILD)/bench.json -o $@ --title BENCH --opt 2 $(SRC) > $(BUILD)/bench.lst
 
+# the same with the plotter's routines a bare RTS: its times are the bench's own decoding, to take off
+benchnull: $(BUILD)/benchnull.ssd
+
+$(BUILD)/benchnull.ssd: $(DEPS) | $(BUILD)
+	$(BARON) -v -D BENCH=TRUE -D BENCHNULL=TRUE --symbols $(BUILD)/benchnull.json -o $@ --title BENCH --opt 2 $(SRC) > $(BUILD)/benchnull.lst
+
 $(BUILD):
 	mkdir -p $@
 
@@ -65,4 +71,4 @@ release: $(BUILD)/exolon.ssd
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all bench release clean
+.PHONY: all bench benchnull release clean
