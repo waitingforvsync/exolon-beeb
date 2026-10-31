@@ -218,6 +218,10 @@ authenticity if nothing else"
   self-erasing alone (which is wrong where sprites overlap), the worst 0-7%; XORing everything costs 18-64% at
   the median, 9-16% at the worst. The journal has the table.
 
+### D38. The 8-line sprites compiled, 1,116 bytes more in all (2026-10-31)
+Rich, shown the compiled 8-line sprites (zone 38's worst pass 60,894 → 49,119 cycles; the data bank 1,536 bytes
+smaller, main RAM 2,652 bytes more, in what was padding at `&259`-`&CB4`): "I think this is good."
+
 ---
 
 ## Proposed
