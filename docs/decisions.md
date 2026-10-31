@@ -163,6 +163,11 @@ and the plots it logs are the benchmark for the BBC's plotters. No shim is neede
 not R.
 
 ### P8. The background as a tile map
+Measured in Phase 1A (`docs/cpc-zones.md`, `tools/zonemodel.py`, which rebuilds all 125 zones exactly from the
+data): one block a cell is exact; a cell written twice takes the later block. 445 distinct blocks in all
+(7,120 bytes; 3,205 packed, dithered, in column order), 27-161 a zone, so a byte numbers a zone's tiles. The
+placements and scripts pack to 4,046 bytes against about 11,000 for ready-made tile maps: so the BBC runs the
+scripts at zone entry (in the pause, D12), as the CPC does, into the tile map.
 Every zone is objects placed on the Spectrum's character grid (row 0-19, column 0-31), each drawn by a script of
 2-byte × 8-line blocks (`&3BF0`). So in the pause before a zone (D12) the BBC runs the zone's placements into a
 32 × 22 map of tile numbers (704 bytes), and draws the screen from it. The tiles are converted (dithered) at
@@ -246,6 +251,8 @@ placements are identical, but for two things. Follow which?
 - One alien path byte (`&3203`): `&08` on the CPC, `&18` on the Spectrum.
 - (The random generator is called differently in two places, big explosions and the stars, so a lockstep check
   follows one version or the other.)
+- Phase 1A: the CPC's four are single `&FF` bytes, with nothing hidden after them. Restoring them means new
+  graphics from the Spectrum's (two-colour cells), drawn in the CPC's style.
 
 ### O8. Quirks of the original: keep or fix? (2026-10-31, Phase 1C)
 - The exoskeleton protects only against mines and popups.

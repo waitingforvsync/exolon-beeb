@@ -1,12 +1,13 @@
 """A model of how the CPC original draws a zone's background, from its data alone (docs/cpc-zones.md).
 
 It runs the zone set-up (&126E) as the spec describes it: the cell maps cleared, the stars, the placements'
-object scripts through the block interpreter (&3CDD), the special cells listed (&1BE0) and the force field's
+object scripts through the block interpreter (&3CDD), the special cells listed (&1BE0) and the barrier's
 beam (&38AD). Out come the tile map (each cell's block, or a star), the two cell maps (&B700, &BA00), the
 playfield's bytes and a PNG in the CPC's palette (the inks at &3EF0).
 
     .venv/bin/python tools/zonemodel.py 0 build/zone0.png          # zone 0, the generator's seed 0
     .venv/bin/python tools/zonemodel.py 0 out.png --seed 0x1234    # with the seed (&3B02) found at &126E
+    .venv/bin/python tools/zonemodel.py 0 --map                    # the tile map and the cell maps as text
     .venv/bin/python tools/zonemodel.py --check [first-last] [--seeds] [--png]
                                         # zones against the CPC's own drawing; --seeds pokes a different
                                         # seed for each zone; --png keeps both screens in work/zones/png
@@ -20,6 +21,8 @@ for byte, leaving out the bytes a sprite plotter (&07D9, &0B5F, &2020) wrote dur
     z.tiles[row][col]                      # (set, block), ('star', byte) or None; rows 0-21 the playfield
     z.screen                               # 64 bytes a line, 192 lines
     z.b700, z.ba00                         # the cell maps, 32 a row
+    nums, tiles = zonemodel.tilemap(z)     # 22 x 32 tile numbers (0 none, 1-7 the stars' pens), and the
+                                           # 16-byte blocks numbered from 8 in order of first use
 """
 import os
 import sys
@@ -31,11 +34,11 @@ from cpc import FRAME_T, HWRGB, initial_memory, mode0_pens      # noqa: E402
 
 ZONES = 0x490E                      # word table, 125 zones: placement lists (row, column, object), &FF ends
 SCRIPTS = 0x1305                    # word table, 62 objects: block scripts
-FONT = 0x69DD                       # the default block set (the font: characters &20-&5F used)
+FONT = 0x69DD                       # the default block set (the font: characters &20-&5A at &6BDD)
 INKS = 0x3EF0                       # the 16 hardware inks
 ROWS, COLS = 22, 32                 # the playfield's cells; rows 22-23 are the status
 LISTS = 0x1C42                      # 6 bytes a cell value v at LISTS + 6v (v = 2-17): list, pointer, stride, value
-BEAM_LIST = 0x38E2                  # the list of value 17: the force field's emitter (column, row)
+BEAM_LIST = 0x38E2                  # the list of value 17: the barrier's emitter (column, row)
 BEAM_SET = 0x38E5                   # the beam's block: 55 AA on every line
 STAR_LINE = 8                       # the star block (&302E) is blank but for byte 8: line 4, the left byte
 
@@ -226,7 +229,7 @@ def build(mem, zone, seed=0):
         if v >= 2:
             z.lists.setdefault(v, []).append((cell & 31, cell >> 5))
             z.maps[0x300 + cell] = mem[LISTS + 6 * v + 5]
-    # &38AD: the force field, from the emitter (value 17) down to the first cell of &BA00 not 0
+    # &38AD: the barrier, from the emitter (value 17) down to the first cell of &BA00 not 0
     if 17 in z.lists:
         col, row = z.lists[17][0]                   # the list holds one entry: the first found
         n = 0
@@ -241,6 +244,28 @@ def build(mem, zone, seed=0):
     return z
 
 
+def tilemap(z):
+    """The zone's tile map: 22 rows of 32 numbers, 0 for a cell never written, 1-7 a star of that pen (its byte
+    is AND &54: pen bits from bits 6, 2, 4), 8 on the distinct blocks in order of first use; and those blocks."""
+    nums, tiles, index = [], [], {}
+    for r in range(ROWS):
+        row = []
+        for c in range(COLS):
+            t = z.tiles[r][c]
+            if t is None:
+                row.append(0)
+            elif t[0] == 'star':
+                row.append(mode0_pens(t[1])[1])
+            else:
+                d = z.block(*t)
+                if d not in index:
+                    index[d] = 8 + len(tiles)
+                    tiles.append(d)
+                row.append(index[d])
+        nums.append(row)
+    return nums, tiles
+
+
 def placements(mem, zone):
     a = word(mem, ZONES + 2 * zone)
     out = []
@@ -252,15 +277,13 @@ def placements(mem, zone):
 
 def image(screen, inks, rows=ROWS, scale=2):
     """MODE 0 bytes (64 a line, line-major) as an image, pixels twice as wide as tall (as cpc.screen_image)."""
-    rgb = [HWRGB[i] for i in inks]
-    img = Image.new('RGB', (256, rows * 8))
-    px = img.load()
-    for y in range(rows * 8):
-        for x in range(64):
-            left, right = mode0_pens(screen[y * 64 + x])
-            px[x * 4, y] = px[x * 4 + 1, y] = rgb[left]
-            px[x * 4 + 2, y] = px[x * 4 + 3, y] = rgb[right]
-    return img.resize((img.width * scale // 2, img.height * scale), Image.NEAREST)
+    import numpy as np
+    rgb = np.array([HWRGB[i] for i in inks], dtype=np.uint8)
+    pens = np.array([mode0_pens(b) for b in range(256)], dtype=np.uint8)          # 256 x 2
+    b = np.frombuffer(bytes(screen[:rows * 8 * 64]), dtype=np.uint8).reshape(rows * 8, 64)
+    px = pens[b].reshape(rows * 8, 128)                                          # a pen a pixel
+    img = rgb[px].repeat(2 * scale // 2, axis=1).repeat(scale, axis=0)           # wide pixels, lines doubled
+    return Image.fromarray(img, 'RGB')
 
 
 def cpc_screen(mem, rows=24):
@@ -273,6 +296,29 @@ def cpc_screen(mem, rows=24):
 
 
 SPRITES = (0x07D9, 0x0B5F, 0x2020)
+
+
+def run_until(m, addrs, max_t):
+    """Run the harness until PC is one of addrs (one instruction at least): the address, or None after max_t."""
+    z = m.z
+    for a in addrs:
+        z.set_breakpoint(a)
+    if z.pc in addrs:
+        z.step_over_breakpoint()
+    left, hit = max_t, None
+    while left > 0 and hit is None:
+        m.budget = min(left, 1 << 22)
+        z.ticks_to_stop = m.budget
+        ev = z.run()
+        ran = m.budget - z.ticks_to_stop
+        m.t += ran
+        left -= ran
+        m.budget = 0
+        if ev & z._BREAKPOINT_HIT and z.pc in addrs:
+            hit = z.pc
+    for a in addrs:
+        z.clear_breakpoint(a)
+    return hit
 
 
 def harness_zone(zone, seed=None):
@@ -305,18 +351,14 @@ def harness_zone(zone, seed=None):
         m.mem[0x3B02], m.mem[0x3B03] = seed & 0xFF, seed >> 8
     seed = word(m.mem, 0x3B02)
     while True:
-        for a in SPRITES:
-            z.set_breakpoint(a)
-        hit = m.run_to(0x06C3, 100 * FRAME_T)
-        for a in SPRITES:
-            z.clear_breakpoint(a)
-        if hit:
+        hit = run_until(m, SPRITES + (0x06C3,), 100 * FRAME_T)
+        if hit == 0x06C3:
             break
-        if z.pc not in SPRITES:
+        if hit is None:
             raise RuntimeError(f'zone {zone}: no first pass')
         ret = word(m.mem, z.sp)
         inside[0] = True
-        m.run_to(ret, 10 * FRAME_T)
+        run_until(m, (ret,), 10 * FRAME_T)
         inside[0] = False
     z.unmark_addrs(0xC000, 0x4000, z.WRITE_MARK)
     return m, seed, touched
@@ -353,7 +395,7 @@ if __name__ == '__main__':
     args = sys.argv[1:]
     if args and args[0] == '--check':
         zs = range(125)
-        if len(args) > 1:
+        if len(args) > 1 and not args[1].startswith('--'):
             a, _, b = args[1].partition('-')
             zs = range(int(a), int(b or a) + 1)
         res = check(zs, out=lambda s: print(s, flush=True), png_dir='work/zones/png', seeds='--seeds' in args,
@@ -367,3 +409,11 @@ if __name__ == '__main__':
         z = build(mem, zone, seed)
         image(z.screen, [mem[INKS + i] for i in range(16)]).save(path)
         print(f'zone {zone}: {len(z.placements)} placements, {len(z.writes)} blocks, {len(z.stars)} stars -> {path}')
+        if '--map' in args:
+            nums, tiles = tilemap(z)
+            print(f'tiles (0 none, 1-7 a star, 8 on {len(tiles)} blocks), then &B700 (. = &FF, # = 0) and &BA00:')
+            for r in range(ROWS):
+                b7 = ''.join('.' if z.b700[r * 32 + c] else '#' for c in range(COLS))
+                ba = ''.join('.' if not z.ba00[r * 32 + c] else '%X' % min(z.ba00[r * 32 + c], 15)
+                             for c in range(COLS))
+                print(' '.join(f'{n:3}' for n in nums[r]) + f'  {b7}  {ba}')

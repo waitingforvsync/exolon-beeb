@@ -37,8 +37,9 @@ the code still to be confirmed. The BBC's sizes and speeds are estimates until P
 | `EXOLON.2` | `&6BDD` | 13,348 | Data, `&6BDD`-`&A000` |
 | `EXOLON.3` | `&C000` → `&A001` | 4,556 | Data, `&A001`-`&B1CC` |
 
-The pokes give a few variables: ammo `&1159`, grenades `&1F7A`, lives `&2A25`, invulnerability `&0779`,
-start zone `&12FA` (0-124).
+The pokes patch the `DEC A`s that use them up: ammo at `&1159`, grenades `&1F7A`, lives `&2A25`, the
+invulnerability timer `&0779`; and the start zone `&12FA` (0-124). The variables themselves are ammo `&1BB4`,
+grenades `&1BC0`, lives `&1BD4` and the invulnerability timer `&078C` (`docs/cpc-graphics.md`).
 
 ### Start-up and the hardware
 - `&0100`: `DI`, SP = `&0100`. `&3E90` sets the CRTC (R1 = 32, R2 = 43, R6 = 24, R7 = 29, start `&C000`),

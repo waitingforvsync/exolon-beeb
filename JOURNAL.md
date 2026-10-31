@@ -143,3 +143,24 @@ What's been done, newest last, with measurements. Decisions are in `docs/decisio
 - Stages of 25 zones, each with a start point; 9 lives, one more at a stage's end; 700 passes in a zone before
   a time-out missile; the game loops to zone 0 after 124.
 - Questions O10-O14 for Rich.
+
+### Phase 1A: zones and graphics (`docs/cpc-zones.md`, `cpc-graphics.md`, `tools/zonemodel.py`, `tools/plotlog.py`; an agent)
+- `tools/zonemodel.py` builds a zone from the data alone and matches the CPC's own drawing in all 125 zones,
+  every playfield byte and both cell maps, with the title's seed and with a different seed poked for each
+  (checked again here: zones 0-9, 10 of 10).
+- One block a cell, exact; 445 distinct blocks, 7,120 bytes, 3,205 packed dithered in column order; 27-161 a
+  zone. Placements and scripts pack to 4,046 bytes: the BBC runs the scripts at zone entry (P8).
+- The 32- and 16-line plotters drop their bytes in cells whose `&B700` is 0: all scenery but the planets and a
+  few others, and the status rows. So sprites go behind almost everything; composing over scenery is rare.
+- 66 random stars before the placements; a cell written blank can't show one.
+- In play, under a block a pass changes on the grid (flames, muzzles, burning mines, erasures); 26 tiles more.
+- Workload (1,599 passes, zones 0, 38, 94, 99, padding left out): plots a pass median 21, 90% 53, max 218;
+  bytes a pass 1,040, 1,968, 5,384. Largest move in a plot 4 pixels and 8 lines.
+- Zone set-up 190-273 ms of CPC time (median 230), 74 ms of it clearing the screen.
+- The disc's poke addresses are `DEC A`s; the variables are ammo `&1BB4`, grenades `&1BC0`, lives `&1BD4`,
+  invulnerability `&078C`. The plan corrected.
+
+### Phase 1 done
+The spec of the original is in `docs/cpc-zones.md`, `cpc-graphics.md`, `cpc-loop.md`, `cpc-player.md`,
+`cpc-flow.md` and `cpc-objects.md`, each checked in the harness and against the Spectrum. Open for Rich:
+O7-O14 (`docs/decisions.md`).
