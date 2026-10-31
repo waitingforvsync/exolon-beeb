@@ -231,6 +231,13 @@ counted with Teddy Boy's `zx02.py`):
 
 ## Open
 
+### O6. An experiment, later: the Spectrum's graphics in MODE 1 with raster colour splits (2026-10-31)
+Rich: "Possibly I would like to try Spectrum type graphics in Mode 1 with raster colour splits as a possible
+experiment later on."
+- MODE 1 at the same R1 = 64 is 256 pixels across, the Spectrum's own width, in the same 12K screen and the same
+  CRTC set-up: only the ULA's control register and the graphics change. Four colours a line against the
+  Spectrum's two a character cell, with the palette split per character row (or finer) for its colours.
+
 ### O7. Where the CPC and the Spectrum differ in play (2026-10-31, Phase 1C)
 `docs/cpc-objects.md`: the two agree in every rule, speed, timer, hit count, point and spawn, and the zones'
 placements are identical, but for two things. Follow which?
@@ -246,6 +253,10 @@ placements are identical, but for two things. Follow which?
 - The barrier kills only at exactly px + 12 = its x.
 - The launchers' scan stops early in a pass.
 - Effects are dropped silently when their list is full.
+
+### O9. The stars: random on every visit? (2026-10-31, Phase 1C)
+Each visit to a zone scatters 66 one-pixel stars in pens 1-7, from the random generator, before the scenery is
+drawn: a zone looks different each time. Keep that, or fix each zone's stars?
 
 ### O10. The time limit in a zone (2026-10-31, Phase 1B)
 After 700 passes in a zone (reset by a death) a time-out missile comes, and another whenever one ends. That's
@@ -271,14 +282,3 @@ only up to them?
 ### O14. The turn's still pass (2026-10-31, Phase 1B)
 Turning round costs a pass with no step (the mirroring's 96.7 ms is the CPC's, not the rule's). Claude
 recommends keeping the still pass: it's the original's feel on both machines.
-
-### O9. The stars: random on every visit? (2026-10-31, Phase 1C)
-Each visit to a zone scatters 66 one-pixel stars in pens 1-7, from the random generator, before the scenery is
-drawn: a zone looks different each time. Keep that, or fix each zone's stars?
-
-### O6. An experiment, later: the Spectrum's graphics in MODE 1 with raster colour splits (2026-10-31)
-Rich: "Possibly I would like to try Spectrum type graphics in Mode 1 with raster colour splits as a possible
-experiment later on."
-- MODE 1 at the same R1 = 64 is 256 pixels across, the Spectrum's own width, in the same 12K screen and the same
-  CRTC set-up: only the ULA's control register and the graphics change. Four colours a line against the
-  Spectrum's two a character cell, with the palette split per character row (or finer) for its colours.
