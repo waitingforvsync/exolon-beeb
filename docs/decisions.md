@@ -222,6 +222,19 @@ authenticity if nothing else"
 Rich, shown the compiled 8-line sprites (zone 38's worst pass 60,894 → 49,119 cycles; the data bank 1,536 bytes
 smaller, main RAM 2,652 bytes more, in what was padding at `&259`-`&CB4`): "I think this is good."
 
+### D39. The plot driver: each object a unit, 8-line sprites in regions (2026-10-31, was P15)
+Rich, asked if he was happy with the region scheme and the two rules for the game: "yes, go ahead with the
+beam waiting"
+- A pass's plots go through one driver (`plot_pass`), from lists the game gives: the large sprites plotted
+  (slot, sprite, x, y, or gone), the debris and the other 8-line sprites (where each is XORed off, where on).
+- Each object is plotted as a unit (edges and draw, or XOR off and on), the large sprites by their tops, for
+  racing the beam. Self-erasing large sprites make regions of lines; the 8-line sprites that can reach a region
+  are XORed off before its large sprites and on after, so no store meets one; the rest go as they're found.
+- Measured over the four logs: exact (every pass's screen as all-XOR's); plotting a median 7,346-30,929
+  cycles a pass, the worst 33,334-69,522 (the journal has the table).
+- The game must list every 8-line sprite on the screen each pass, and move none more than 8 lines and 8
+  pixels a pass.
+
 ---
 
 ## Proposed
@@ -316,17 +329,6 @@ counted with Teddy Boy's `zx02.py`):
 - So: frames stored in the plotter's column order, dithered at build time. Standard ZX02 (D16).
 
 ---
-
-### P15. The plot driver: each object a unit, 8-line sprites in regions (after D37)
-- A pass's plots go through one driver (`plot_pass`), from lists the game gives: the large sprites plotted
-  (slot, sprite, x, y, or gone), the debris and the other 8-line sprites (where each is XORed off, where on).
-- Each object is plotted as a unit (edges and draw, or XOR off and on), the large sprites by their tops, for
-  racing the beam. Self-erasing large sprites make regions of lines; the 8-line sprites that can reach a region
-  are XORed off before its large sprites and on after, so no store meets one; the rest go as they're found.
-- Measured over the four logs: exact (every pass's screen as all-XOR's); plotting a median 7,346-30,929
-  cycles a pass, the worst 33,334-69,522 (the journal has the table).
-- The game must list every 8-line sprite on the screen each pass, and move none more than 8 lines and 8
-  pixels a pass.
 
 ## Open
 
