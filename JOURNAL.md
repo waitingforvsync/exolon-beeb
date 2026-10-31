@@ -164,3 +164,11 @@ What's been done, newest last, with measurements. Decisions are in `docs/decisio
 The spec of the original is in `docs/cpc-zones.md`, `cpc-graphics.md`, `cpc-loop.md`, `cpc-player.md`,
 `cpc-flow.md` and `cpc-objects.md`, each checked in the harness and against the Spectrum. Open for Rich:
 O7-O14 (`docs/decisions.md`).
+
+### Rich's answers, and the sprite design revised
+- D25-D29: the time limit 840 passes; the Spectrum's names, 17 entries; no pause or redefining for now; no
+  lockstep at the AF' calls; the turn's still pass kept, mirroring the player's frames in it if it fits.
+- D30-D32: frames trimmed to their bounding rectangle with dirty edges cleared first (Teddy Boy's way);
+  sprites always behind the map; bit 3 as is useful. P9 and P10 rewritten: bit 3 marks the map's coloured
+  pixels and the stars, so drawing and clearing read what's in front from the screen itself, and nothing is
+  ever restored from tile data.

@@ -139,6 +139,42 @@ against this when writing game mechanics to keep it faithful to both."
   20.9: D8's 25 is close to the original's own pace.
 - Where the two differ in anything that affects play, the specs give both and Rich chooses.
 
+### D25. The time limit: 840 passes (2026-10-31, was O10)
+Rich: "O10: 840 passes."
+- The CPC's 33.5 s at 25 passes a second.
+
+### D26. The high-score table: the Spectrum's names, 17 entries (2026-10-31, was O11)
+Rich: "O11: Spectrum names, 17 entries."
+
+### D27. No pause or redefining the keys for now (2026-10-31, was O12)
+Rich: "O12: don't worry about redefine keys or pause for now."
+
+### D28. No lockstep at the AF' call sites (2026-10-31, was O13)
+Rich: "O13: don't worry, not important."
+- A lockstep check against the original runs until the first of those calls, or patches round them.
+
+### D29. Keep the turn's still pass; perhaps mirror the player's frames then (2026-10-31, was O14)
+Rich: "O14: keep; see if performance permits mirroring all the player graphics at that moment, it will save some
+memory!"
+- The CPC's 96.7 ms (`&0E04`) is what's to beat: one facing kept, mirrored in place within the turn's pass.
+
+### D30. Sprites trimmed to their bounding rectangle; dirty edges erased first (2026-10-31)
+Rich: "Regarding self-erasing sprites: they should not contain the erasing border themselves, they should be sized
+to the smallest bounding rectangle on byte boundaries. But in general they should erase anything behind them in
+their new position, and will need special "dirty edge" erasing as a first pass, as per teddy boy."
+- Supersedes P9's blank border in the frames.
+
+### D31. Sprites always behind the map's graphics (2026-10-31)
+Rich: "Let's assume that sprites are always drawn behind the map graphics, hopefully that simplifies things."
+- So no tile is ever composed under a sprite: where a cell's empty the sprite is stored straight, and scenery
+  stays in front. The CPC hides sprites behind most scenery a whole cell at a time (Phase 1A); this is the same
+  rule for all of it.
+
+### D32. Bit 3: whatever serves; overlapping sprites by measurement (2026-10-31)
+Rich: "Do with bit 3 whatever is useful. Maybe it's useful to use it as a "draw behind" marker, which even works
+for overlapping sprites. Or maybe overlapping sprites being EORed is OK. I don't have a strong opinion,
+performance and code complexity will dictate the best option."
+
 ---
 
 ## Proposed
@@ -175,32 +211,32 @@ build time and laid out for the plotters (Teddy Boy's line-planar tiles); the em
 finds the tiles under it in the map, so it knows where it may store straight (D7) and composes from the tile
 data, never the screen. Phase 1 confirms that nothing is drawn off the grid.
 
-### P9. How a sprite is drawn (Teddy Boy's P7 and P8, for Exolon)
-Revised after Phase 1C: the original's 16- and 32-line sprites are clipped where a cell is in front of them
-(`&B700` = 0), so they pass behind that scenery a cell at a time. So a cell is empty, background (sprites drawn
-over it) or foreground (sprites hidden behind it), and the BBC skips a sprite's bytes in foreground cells:
-cheaper than composing them. The 8-line XOR objects aren't clipped.
-- **Over empty tiles** (all of them under the old place and the new): the sprite's bytes stored straight,
-  its transparent pixels as 0, and zeros over the bytes it has left. The frames carry a blank border as wide
-  as the furthest the object moves in a pass, or the plotter clears the vacated strip: whichever measures
-  cheaper.
-- **Over a non-empty tile**: `(tile AND mask) OR sprite` for those bytes, and the vacated bytes from the tile
-  data.
-- **Over another sprite**: back to front; the one behind drawn whole, the one in front masked where they meet
-  (Teddy Boy's P24).
-- Each screen byte is written once a pass, so a sprite is never seen erased. Sprites are plotted in order of
-  height against the beam, each before the beam reaches its top or after it has passed its bottom (D9).
-- Explosions and particles XOR-plotted (D10), as the original does them.
-- If a pass can't fit, what gives (unmasked overlaps, an object held a pass) is measured and decided then, as
-  Teddy Boy's D25 and D27 were.
+### P9. How a sprite is drawn (after D30-D32)
+- **Frames** trimmed to their bounding rectangle on byte boundaries (D30), dithered, in column order; each
+  object's other shift made between screens (P5).
+- **The dirty edges first**: the bytes of the old rectangle the new one doesn't cover are cleared of every
+  pixel without bit 3 (P10). Scenery and stars keep themselves, so nothing is restored from tile data.
+- **Then the new rectangle**: in an empty cell (the tile map says so, a column's band at a time) the sprite's
+  bytes are stored straight; in a cell with scenery or stars, each byte keeps the screen's bit-3 pixels and
+  takes the sprite's elsewhere (`LDA (scr),Y : TAX : LDA (spr),Y : AND Hole,X : ORA Keep,X : STA (scr),Y`,
+  about 26 cycles, against about 11 straight). Sprites are behind all of the map (D31), and seen through its
+  black gaps.
+- **Overlapping sprites**: all of a pass's edge clearing before its drawing, the drawing back to front, so a
+  later sprite simply overwrites an earlier one; or EOR where they meet; or bit 3 on sprites too, as a
+  draw-behind marker (D32). Measured in Phase 2.
+- **Explosions, debris, particles**: XOR, as the original (D10).
+- Each pass's work goes in order of height against the beam; a byte is written once a pass except where
+  sprites overlap.
 
-### P10. Transparency and bit 3
-- Logical 0 is transparent, as pen 0 is in the original's XOR. The mask comes from a 256-byte table indexed by
-  the sprite byte (Teddy Boy's D12).
-- Pens 1 and 4 dither with black. Their black pixels in a sprite are stored as logical 8, which the palette
-  shows as black, so they stay opaque.
-- Bit 3 otherwise marks opaque pixels, so a wholly opaque byte is stored without its mask (Teddy Boy's D24,
-  adapted: here black can be opaque).
+### P10. Bit 3: the map's mark (after D31, D32)
+- Every coloured pixel of a tile, and every star, is drawn with bit 3 set (logical 9-15, which the palette
+  makes the same as 1-7). Black pixels and sprites never have it.
+- So a sprite's plot and its edge clearing find what's in front of it on the screen itself, a pixel at a time,
+  with two 256-byte tables (`Keep`: a byte's bit-3 pixels; `Hole`: the rest).
+- Transparency doesn't need a value of its own: the background is black, so a sprite's transparent and black
+  pixels look alike, and pens 1 and 4's black halves need nothing special (P10's first form dropped).
+- Logical 8 (bit 3, black) is then unused: it can be the flashing pen 15 (the barrier, the ammo and LIVES), one
+  palette write a pass cycling through the CPC's colours (`&39EF`), each the BBC's nearest.
 
 ### P11. Two banks; the graphics and the zones packed, and the next screen's set unpacked between screens
 - Main RAM keeps 20,192 bytes below the screen; two banks give 52,960 in all. Main RAM's code runs on from
@@ -264,28 +300,3 @@ placements are identical, but for two things. Follow which?
 ### O9. The stars: random on every visit? (2026-10-31, Phase 1C)
 Each visit to a zone scatters 66 one-pixel stars in pens 1-7, from the random generator, before the scenery is
 drawn: a zone looks different each time. Keep that, or fix each zone's stars?
-
-### O10. The time limit in a zone (2026-10-31, Phase 1B)
-After 700 passes in a zone (reset by a death) a time-out missile comes, and another whenever one ends. That's
-33.5 s on the CPC and 28 s at the BBC's 25 passes a second. Keep 700 passes, or scale it to keep the CPC's
-seconds (about 840)?
-
-### O11. The high-score table (2026-10-31, Phase 1B)
-This disc's hacker replaced the names with greetings ("ARAGORN", "GREETZ" ...). The Spectrum original's are
-there in its table (a leftover "SURYANI" past the CPC's table matches the Spectrum's second). The Spectrum keeps
-50 entries, the CPC 17. Which names, and how many? And fix the CPC's name-entry bug (the 9th and 10th
-characters keep the displaced entry's letters)?
-
-### O12. Pause, restart and the cheat (2026-10-31, Phase 1B)
-The CPC pauses on ESCAPE and restarts on CTRL+SHIFT+ESCAPE; the Spectrum pauses on 3 and quits on 0+9+8+7.
-Defining the keys as Z, O, R, B, A toggles infinite lives on both. Which keys on the BBC, and does the cheat go
-into the define-keys loader (D18)?
-
-### O13. Lockstep at two places the Z80 passes A from AF' (2026-10-31, Phase 1B)
-Every random number depends on the caller's A; two call sites take A from AF' (cosmetic uses, but they change
-the seed). Copy that, so the BBC stays in lockstep with the original, or let them diverge and check lockstep
-only up to them?
-
-### O14. The turn's still pass (2026-10-31, Phase 1B)
-Turning round costs a pass with no step (the mirroring's 96.7 ms is the CPC's, not the rule's). Claude
-recommends keeping the still pass: it's the original's feel on both machines.
