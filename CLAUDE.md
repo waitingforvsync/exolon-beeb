@@ -39,6 +39,11 @@ level. Use the `beeb-baron` skill for all 6502.
   `CPC()` starts at `&0100` with everything loaded; `start_game()` gets past the title; `run_passes(n,
   keys_for)` runs main-loop passes (each to `&06C3`); `time_passes(n, keys_for)` single-steps them with the
   CPC's microseconds; `screen_png(path)` renders what's shown. Keys are the CPC's: O, P, Q, A, SPACE.
+- **The Spectrum original** (D24): `docs/Exolon.tzx` (git-ignored), loaded once to `build/spec/exolon.z80` by
+  `.venv/bin/tap2sna.py --start 0x6D60 -c finish-tape=1 -c timeout=500 docs/Exolon.tzx build/spec/exolon.z80`.
+  `tools/spectrum.py` runs it (`Spectrum()`, `run_frames`, `run_to`, `hold`, `screen_png`);
+  `tools/cpc2spec.py [CPC addresses]` maps CPC routines to their Spectrum twins. Mechanics are checked against
+  both; where they differ, Rich chooses.
 - `tools/cpcdsk.py` reads the disc's files; `tools/gendata.py` makes `build/gen` from them.
 - `.venv/bin/sna2skool.py -H -o 0 -s START -e END -c 0 dump.bin` disassembles a 64K dump (named `.bin`; make
   one with `cpc.initial_memory()`).
