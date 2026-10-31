@@ -5,7 +5,8 @@ on byte boundaries for each pixel shift, dithered to MODE 2, column by column.
 
 For now every sprite is kept raw in the data's bank, but for those OMITTED (blank, SprW 0): the suit's frames,
 the title's twinkles and the three never seen, none of which the plot logs draw. Packs unpacked between screens
-replace this (P5, P11).
+replace this (P5, P11). The six tables (SprW, SprH, SprDX, SprDY, SprLo, SprHi) are a page each, so no indexed
+read of them crosses a page, with whole sprites in the 98 bytes after each of the first five (layout()).
 
 A sprite is one shift of one frame, numbered:
 - 0-49: the 32-line set (the CPC's &93CD: the player's 24 frames facing right, then the popup), frame f's even
@@ -31,6 +32,7 @@ import gendata                                      # noqa: E402
 OMITTED = {('Sprite32', f) for f in range(12, 24)} | {('Sprite16', f) for f in (12, 13, 14, 15, 33, 34, 35)}
 SETS = [('Sprite32', 0x93CD, 25, 6, 32, False), ('Sprite16', 0xA68D, 45, 4, 16, False),
         ('Sprite8', 0x921D, 9, 3, 8, True)]
+Sprite8First = 140
 
 
 def sprite(pens, s, pairs, shifted):
@@ -45,6 +47,8 @@ def sprite(pens, s, pairs, shifted):
     k1 = (max(x for x, _ in opaque) + place) >> 1
     y0 = min(y for _, y in opaque)
     y1 = max(y for _, y in opaque)
+    if shifted:                                     # the 8-line set untrimmed at its top and left (xor8)
+        k0, y0, y1 = 0, 0, hgt - 1
     h = y1 - y0 + 1
     data = bytearray()
     for band in range((h + 7) // 8):
@@ -81,34 +85,98 @@ def sprites(m, pairs):
     return out
 
 
+def debris_code(sp):
+    """Debris (frame 2, sprites 144 and 145) compiled for each even phase: XOR immediates through dt (the
+    cell row's line 0 at the column) and db (dt + 512), each byte's Y its own (INY where it follows on)."""
+    out = ['', '\\\\ debris, compiled (sprites.6502\'s debris_xor)']
+    names = []
+    for p in (0, 2, 4, 6):
+        for s in (0, 1):
+            dx, dy, w, h, d = sp[144 + s]
+            assert dx == 0 and dy == 0 and w == 3 and h == 8
+            todo = []
+            for k in range(3):
+                for j in range(8):
+                    v = d[8 * k + j]
+                    if v:
+                        todo.append((8 * k + p + j, 'dt', v) if p + j < 8 else (8 * k + p + j - 8, 'db', v))
+            todo.sort()
+            name = f'debris_p{p}_s{s}'
+            names.append(name)
+            out.append(f'.{name}')
+            y = None
+            for yy, ptr, v in todo:
+                out.append('    INY' if y is not None and yy == y + 1 else f'    LDY #{yy}')
+                out.append(f'    LDA ({ptr}),Y:EOR #&{v:02X}:STA ({ptr}),Y')
+                y = yy
+            out.append('    RTS')
+    out.append('DebrisList = {' + ', '.join(names) + '}')
+    out.append('SprWList = {' + ', '.join(str(x[2]) for x in sp[140:]) + '}')
+    out.append('.DebLo')
+    out.append('    EQUB ' + ', '.join(f'LO({n})' for n in names))
+    out.append('.DebHi')
+    out.append('    EQUB ' + ', '.join(f'HI({n})' for n in names))
+    return out
+
+
+def layout(sp):
+    """Where each sprite's data goes, as offsets from the tables' page: the six tables a page each (so no indexed
+    read crosses one), the 98 bytes after each of the first five filled with whole sprites (the 8-line set
+    first, so xor8's reads never cross a page either), the rest after the last table. Returns the offsets and
+    the gaps' sprites."""
+    n = len(sp)
+    order = sorted((i for i in range(n) if sp[i][4]), key=lambda i: (i < Sprite8First, -len(sp[i][4])))
+    offsets, gaps = [0] * n, []
+    for g in range(5):
+        room, pos, chosen = 256 - n, 256 * g + n, []
+        for i in list(order):
+            if len(sp[i][4]) <= room:
+                offsets[i], pos, room = pos, pos + len(sp[i][4]), room - len(sp[i][4])
+                chosen.append(i)
+                order.remove(i)
+        gaps.append(chosen)
+    pos = 256 * 5 + n
+    for i in sorted(order):
+        offsets[i], pos = pos, pos + len(sp[i][4])
+    blob = [i for i in sorted(order)]
+    return offsets, gaps, blob
+
+
 def main(out):
     m = initial_memory()
     pairs = gendata.pairs(read_dsk(gendata.DSK))
     sp = sprites(m, pairs)
     os.makedirs(out, exist_ok=True)
-    data, offsets = bytearray(), []
-    for dx, dy, w, h, d in sp:
-        offsets.append(len(data))
-        data += d
+    offsets, gaps, blob = layout(sp)
     with open(os.path.join(out, 'sprites.bin'), 'wb') as f:
-        f.write(data)
+        f.write(b''.join(sp[i][4] for i in blob))
     n = len(sp)
     lines = ['\\\\ sprites.6502 - made by tools/gensprites.py from docs/exolon.dsk: the sprites, trimmed and dithered,',
-             '\\\\ and their tables (tools/gensprites.py says how they\'re numbered).', '',
-             f'SpriteCount = {n}', 'Sprite32 = 0', 'Sprite16 = 50', 'Sprite8 = 140',
-             f'SpriteMaxW = {max(s[2] for s in sp)}', f'SpriteMaxH = {max(s[3] for s in sp)}', '']
-    for label, vals in (('SprW', [s[2] for s in sp]), ('SprH', [s[3] for s in sp]),
-                        ('SprDX', [s[0] for s in sp]), ('SprDY', [s[1] for s in sp])):
-        lines += [f'    INPAGE {n}', f'.{label}',
-                  *['    EQUB ' + ', '.join(str(v) for v in vals[i:i + 20]) for i in range(0, n, 20)]]
-    lines += [f'    INPAGE {n}', '.SprLo',
-              *['    EQUB ' + ', '.join(f'LO(SpriteData + {o})' for o in offsets[i:i + 10]) for i in range(0, n, 10)],
-              f'    INPAGE {n}', '.SprHi',
-              *['    EQUB ' + ', '.join(f'HI(SpriteData + {o})' for o in offsets[i:i + 10]) for i in range(0, n, 10)],
-              '.SpriteData', '    INCBIN "sprites.bin"', '']
+             '\\\\ and their tables (tools/gensprites.py says how they\'re numbered and placed).', '',
+             f'SpriteCount = {n}', 'Sprite32 = 0', 'Sprite16 = 50', f'Sprite8 = {Sprite8First}',
+             f'SpriteMaxW = {max(s[2] for s in sp)}', f'SpriteMaxH = {max(s[3] for s in sp)}', '',
+             'ASSERT LO(P%) == 0, "the sprite tables: each in its own page"', '.SpriteTables']
+    tables = (('SprW', [s[2] for s in sp]), ('SprH', [s[3] for s in sp]), ('SprDX', [s[0] for s in sp]),
+              ('SprDY', [s[1] for s in sp]),
+              ('SprLo', [f'LO(SpriteTables + {o})' for o in offsets]),
+              ('SprHi', [f'HI(SpriteTables + {o})' for o in offsets]))
+    used = 0
+    for t, (label, vals) in enumerate(tables):
+        lines += [f'.{label}', *['    EQUB ' + ', '.join(str(v) for v in vals[i:i + 10]) for i in range(0, n, 10)]]
+        if t < len(gaps):
+            data = b''.join(sp[i][4] for i in gaps[t])
+            used += len(data)
+            lines += [f'    \\\\ sprites {", ".join(str(i) for i in gaps[t])}',
+                      *['    EQUB ' + ', '.join(f'&{b:02X}' for b in data[i:i + 16]) for i in range(0, len(data), 16)],
+                      f'    SKIP {256 - n - len(data)}']
+    lines += ['.SpriteData', '    INCBIN "sprites.bin"',
+              f'ASSERT SpriteData == SpriteTables + {256 * 5 + n}, "the sprites after the tables where gensprites put them"',
+              '']
+    lines += debris_code(sp)
     with open(os.path.join(out, 'sprites.6502'), 'w') as f:
         f.write('\n'.join(lines))
-    print(f'{n} sprites, {len(data)} bytes of data')
+    total = sum(len(s[4]) for s in sp)
+    print(f'{n} sprites, {total} bytes of data ({used} in the tables\' pages, {5 * (256 - n) - used} spare there)')
 
 
 if __name__ == '__main__':

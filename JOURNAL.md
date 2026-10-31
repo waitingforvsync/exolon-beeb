@@ -218,3 +218,42 @@ O7-O14 (`docs/decisions.md`).
 - The worst pass is 104 8-line XORs (52 debris, off and on): about 1,100 cycles a plot, 430 of them bytes. The
   rest is the general walker's set-up (the phase patch, two bands, the exit patch). The debris needs its own
   path.
+
+### The plotter reviewed, and adopted
+- A second agent reviewed the plotter for speed, measuring each change over the logs of four zones (0, 38, 94,
+  99; 1,580 passes), with the screen's hash after every pass the same as the first version's.
+- `walk` is now for the large sprites only (draw and clear, straight or behind the map). Its pointers step a
+  band at a time, V is set for the whole bands, and the last band is left by a 2-byte BNE patched over the next
+  step (was a JMP). `set_phase` patches the two draw blocks only, since the clear blocks read no sprite.
+- The 8-line sprites have their own path, `xor8`: for each phase an unrolled run of 24 XOR steps (the lines
+  under the phase through `xb`, the cell row below), entered at the sprite's width (`XEnt`).
+- The debris (frame 2) is compiled: XOR immediates for each even phase, through `debris_xor` and `DebJmps`.
+  Clearing it instead of XORing it was measured, and lost.
+- The order in a pass: 8-line sprites off, large sprites' edges, large sprites drawn, 8-line sprites on.
+- The srca bug: the draw steps were all assembled reading `(srcb),Y` and `set_phase` patched some to `(srca)`,
+  so Baron saw srca never read and gave its bytes to other variables. That's Baron's documented limit (an
+  operand patched at run time is invisible to it), not a bug in it. Steps 0-3 of both draw blocks are now
+  assembled reading `(srca),Y`, with `StepsPhase` starting at 4 to match. The listing has srca at `&0E`, apart
+  from srcb (`&02`), scr (`&04`) and the walk's own.
+- The sprite tables: each of the six (`SprW`, `SprH`, `SprDX`, `SprDY`, `SprLo`, `SprHi`) is a page to
+  itself, so no indexed read of one crosses a page, with whole sprites in the 98 bytes after each of the first
+  five (480 bytes, the 8-line set first, so `xor8`'s reads never cross a page). The review's had all six
+  `INPAGE`: the data bank is 512 bytes smaller (15,831 → 15,319 bytes in the benchmark's build) and 3-150
+  cycles a pass faster at each measure below. Packed it's 49 bytes bigger (4,400 → 4,449), the padding having
+  packed to nearly nothing. The game's build: 15,172 bytes (4,333 packed), 700 free below DataVars.
+
+Plotting, cycles a pass (the first version → now), the screens hash-identical every pass:
+
+| Zone | Median | 90% | 99% | Max | Passes over 40,000 |
+|---|---|---|---|---|---|
+| 0 | 9,458 → 7,003 | 35,676 → 19,174 | 90,128 → 36,160 | 116,315 → 49,529 | 34 → 1 of 380 |
+| 38 | 55,871 → 29,988 | 82,494 → 42,772 | 92,549 → 48,989 | 106,092 → 57,140 | 343 → 77 of 400 |
+| 94 | 62,422 → 32,293 | 130,844 → 59,223 | 178,925 → 78,488 | 207,866 → 86,967 | 400 → 117 of 400 |
+| 99 | 31,244 → 25,747 | 48,817 → 37,230 | 106,417 → 59,245 | 144,780 → 75,706 | 120 → 26 of 400 |
+
+- A pass has 79,872 cycles (two frames) less the IRQ's, and the game's logic must fit as well, so zone 94's worst
+  passes are still too slow. Next, measured one at a time: small explosions as changes between frames, never
+  plotting the blank frame 6, compiled spores and missiles, one walk for the dirty edges, and the game keeping
+  each sprite's rectangle rather than `sprite_rect` working it out twice.
+- A risk to keep in mind: the 8-line paths don't clip, so y must stay at most 168 (from 185 they would write
+  past `&8000`).

@@ -31,7 +31,9 @@ ENDSECTION
     LDA #HI(CmdBuf):STA cmd+1
 .next
     LDY #0
-    LDA (cmd),Y:BEQ done
+    LDA (cmd),Y:BNE more
+    RTS
+.more
     STA op
     CMP #3:BEQ gone
     CMP #4:BEQ xor
@@ -62,14 +64,22 @@ ENDSECTION
     INY:LDA (cmd),Y:TAX
     INY:LDA (cmd),Y:STA bx
     INY:LDA (cmd),Y:TAY
-    LDA bx:JSR xor_plot
+    LSR A:BCS general                   ; (an odd line: never debris)
+    CPX #Sprite8+4:BEQ debris
+    CPX #Sprite8+5:BNE general
+.debris
+    LDA bx:JSR debris_xor
+    LDA #4:BNE on                       ; (always)
+.general
+    LDA bx:JSR xor8
     LDA #4
 .on
     CLC:ADC cmd:STA cmd
-    BCC next
+    BCC @+
     INC cmd+1
-    BCS next                            ; (always)
-    ZA_UNREACHABLE
+.@
+    JMP next
 .done
     RTS
 }
+
