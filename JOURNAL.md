@@ -238,8 +238,8 @@ O7-O14 (`docs/decisions.md`).
 - The sprite tables: each of the six (`SprW`, `SprH`, `SprDX`, `SprDY`, `SprLo`, `SprHi`) is a page to
   itself, so no indexed read of one crosses a page, with whole sprites in the 98 bytes after each of the first
   five (480 bytes, the 8-line set first, so `xor8`'s reads never cross a page). The review's had all six
-  `INPAGE`: the data bank is 512 bytes smaller (15,831 → 15,319 bytes in the benchmark's build) and 3-150
-  cycles a pass faster at each measure below. Packed it's 49 bytes bigger (4,400 → 4,449), the padding having
+  `INPAGE`: the data bank is 512 bytes smaller (15,831 → 15,319 bytes in the benchmark's build) and 4-150
+  cycles a pass faster than the review's at each measure below. Packed it's 49 bytes bigger (4,400 → 4,449), the padding having
   packed to nearly nothing. The game's build: 15,172 bytes (4,333 packed), 700 free below DataVars.
 
 Plotting, cycles a pass (the first version → now), the screens hash-identical every pass:
