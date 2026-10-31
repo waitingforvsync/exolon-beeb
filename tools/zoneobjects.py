@@ -183,7 +183,47 @@ def kinds_of(z):
     return out
 
 
-ALIEN_FRAMES = {}
+# What each kind draws besides its scenery: 16-line frames (&A68D, 64 bytes each), 8-line frames (&921D, 24
+# bytes a shift), the 32-line popup frame (&A5CD, 192 bytes) and blocks (base, numbers; 16 bytes each).
+ALWAYS = {'f16': {5, 6, 7, 8, 9, 36}, 'f8': {0, 1, 2, 3, 4, 5}}    # big explosions, the time-out missile;
+                                                                 # grenade, debris, small explosions
+DRAWS = {
+    'lights': {'blocks': {(0x6F8D, b) for b in range(0x15, 0x1B)}},
+    'gun': {'blocks': {(0x758D, b) for b in range(0x10, 0x20)}},
+    'mine': {'blocks': {(0x6F8D, b) for b in range(0x1D, 0x21)}},
+    'spores': {'f8': {7}},
+    'popup': {'f32': {24}},
+    'launcher': {'f8': {8}},
+    'homing': {'f16': {10, 11}},
+    'generator': {'f16': {28, 29, 30, 31, 32}},
+    'barrier': {'blocks': {(0x38E5, 0)}},
+}
+
+
+def graphics(z):
+    """The graphics a zone's objects draw: {'f16': set, 'f8': set, 'f32': set, 'blocks': set}."""
+    g = {'f16': set(ALWAYS['f16']), 'f8': set(ALWAYS['f8']), 'f32': set(), 'blocks': set()}
+    for k in z['markers']:
+        for t, v in DRAWS.get(KINDS[k][0], {}).items():
+            g[t] |= v
+    if z['aliens']:
+        g['f16'] |= set(range(z['aliens'][1], z['aliens'][1] + 4))
+    return g
+
+
+def graphics_bytes(g):
+    """Bytes as the CPC stores them (8-line frames with both shifts)."""
+    return 64 * len(g['f16']) + 48 * len(g['f8']) + 192 * len(g['f32']) + 16 * len(g['blocks'])
+
+
+def ranges(nums, fmt=str):
+    out, nums = [], sorted(nums)
+    for n in nums:
+        if out and n == out[-1][1] + 1:
+            out[-1][1] = n
+        else:
+            out.append([n, n])
+    return ','.join(fmt(a) if a == b else f'{fmt(a)}-{fmt(b)}' for a, b in out)
 
 
 def main():
@@ -201,19 +241,30 @@ def main():
         return
     md = '--markdown' in args
     if md:
-        print('| Zone | Kinds (markers: count) | Aliens (path, frames, gap) | Destructible |')
-        print('|---|---|---|---|')
+        print('| Zone | Kinds (count if more than 1) | Aliens: path, frames, gap | Destructible | '
+              '16-line frames beyond 5-9, 36 | Blocks |')
+        print('|---|---|---|---|---|---|')
+    most = 0
     for zone in range(125):
         z = zone_objects(mem, zone)
         ks = ', '.join(f'{KINDS[k][0]}' + (f' {len(r)}' if len(r) > 1 else '')
-                       for k, r in sorted(z['markers'].items()))
+                       for k, r in sorted(z['markers'].items()) if k != 4)
         al = (f'&{z["aliens"][0]:04X}, {z["aliens"][1]}-{z["aliens"][1] + 3}, {z["aliens"][2]}'
               if z['aliens'] else '')
         bx = len(z['boxes'])
+        g = graphics(z)
+        most = max(most, graphics_bytes(g))
+        f16 = ranges(g['f16'] - ALWAYS['f16'])
+        extra = ' '.join(x for x in (f'f8 {ranges(g["f8"] - ALWAYS["f8"])}' if g['f8'] - ALWAYS['f8'] else '',
+                                     'popup' if g['f32'] else '') if x)
+        bl = ' '.join(f'&{b:04X}:{ranges((n for bb, n in g["blocks"] if bb == b), lambda v: f"&{v:02X}")}'
+                      for b in sorted({bb for bb, n in g['blocks']}))
         if md:
-            print(f'| {zone} | {ks} | {al} | {bx or ""} |')
+            print(f'| {zone} | {ks} | {al} | {bx or ""} | {f16} {extra} | {bl} |')
         else:
-            print(f'{zone:3}: {ks:60} {al:20} {bx or ""}')
+            print(f'{zone:3}: {ks:52} {al:20} {bx or "":2} | {f16:12} {extra:14} {bl}')
+    if not md:
+        print(f'largest set of object graphics in a zone (CPC bytes, 8-line frames with both shifts): {most}')
 
 
 if __name__ == '__main__':

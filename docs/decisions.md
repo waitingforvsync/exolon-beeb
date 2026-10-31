@@ -170,6 +170,10 @@ finds the tiles under it in the map, so it knows where it may store straight (D7
 data, never the screen. Phase 1 confirms that nothing is drawn off the grid.
 
 ### P9. How a sprite is drawn (Teddy Boy's P7 and P8, for Exolon)
+Revised after Phase 1C: the original's 16- and 32-line sprites are clipped where a cell is in front of them
+(`&B700` = 0), so they pass behind that scenery a cell at a time. So a cell is empty, background (sprites drawn
+over it) or foreground (sprites hidden behind it), and the BBC skips a sprite's bytes in foreground cells:
+cheaper than composing them. The 8-line XOR objects aren't clipped.
 - **Over empty tiles** (all of them under the old place and the new): the sprite's bytes stored straight,
   its transparent pixels as 0, and zeros over the bytes it has left. The frames carry a blank border as wide
   as the furthest the object moves in a pass, or the plotter clears the vacated strip: whichever measures
@@ -225,6 +229,26 @@ counted with Teddy Boy's `zx02.py`):
 ---
 
 ## Open
+
+### O7. Where the CPC and the Spectrum differ in play (2026-10-31, Phase 1C)
+`docs/cpc-objects.md`: the two agree in every rule, speed, timer, hit count, point and spawn, and the zones'
+placements are identical, but for two things. Follow which?
+- The CPC's object scripts 41, 48, 49 and 51 are empty: zones 22, 25, 26 and 66 lose scenery, and zones 25 and
+  66 an electric-arc generator. The Spectrum has them.
+- One alien path byte (`&3203`): `&08` on the CPC, `&18` on the Spectrum.
+- (The random generator is called differently in two places, big explosions and the stars, so a lockstep check
+  follows one version or the other.)
+
+### O8. Quirks of the original: keep or fix? (2026-10-31, Phase 1C)
+- The exoskeleton protects only against mines and popups.
+- An enemy that kills the player by touching him still scores, as if shot.
+- The barrier kills only at exactly px + 12 = its x.
+- The launchers' scan stops early in a pass.
+- Effects are dropped silently when their list is full.
+
+### O9. The stars: random on every visit? (2026-10-31, Phase 1C)
+Each visit to a zone scatters 66 one-pixel stars in pens 1-7, from the random generator, before the scenery is
+drawn: a zone looks different each time. Keep that, or fix each zone's stars?
 
 ### O6. An experiment, later: the Spectrum's graphics in MODE 1 with raster colour splits (2026-10-31)
 Rich: "Possibly I would like to try Spectrum type graphics in Mode 1 with raster colour splits as a possible

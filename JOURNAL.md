@@ -117,3 +117,15 @@ What's been done, newest last, with measurements. Decisions are in `docs/decisio
   `&DD`/`&E0` (a table's address byte). Most twins diverge at platform code (screen, colour), so mechanics
   are compared by reading.
 - Phase 1's agents B and C were told to cross-reference their mechanics against it.
+
+### Phase 1C: the objects (`docs/cpc-objects.md`, `tools/zoneobjects.py`; an agent)
+- Zone set-up makes the objects from markers the scripts write into `&BA00` (`&EB n`), turned into 16 lists by
+  `&1BE0`; `tools/zoneobjects.py` derives every zone's objects from the data and matches the harness's set-up
+  in all 125 zones.
+- Most at once in play (about 270,000 passes): 6 aliens, 5 big explosions, 16 spores, 10 launcher missiles, 20
+  small explosions, 62 debris, 3 popups; at most 10 16- and 32-line sprites, 78 objects in all. The largest
+  move in a pass: 4 pixels and 8 lines.
+- The 16- and 32-line sprites are clipped where `&B700` is 0: they pass behind scenery a cell at a time. P9
+  revised for it.
+- Against the Spectrum: the same in every rule but the four empty object scripts and one alien path byte (O7).
+  Questions O7-O9 for Rich.
