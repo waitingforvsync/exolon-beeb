@@ -202,6 +202,22 @@ erasing and special handling for overlaps".
 - The Spectrum doesn't mask either: its 32-line (`&7814`), 16-line (`&7A37`) and 8-line (`&9325`) plotters all
   XOR, with whole-cell masks for scenery (`&789E`, from its cell map at `&5B00`) as the CPC's.
 
+### D37. Overlaps: XORed where large sprites meet (2026-10-31, was P14)
+Rich, offered the mix of both originals or masking one in front: "yes let's do EOR mix where they meet", "for
+authenticity if nothing else"
+- Each pass, each large sprite's box (its old rectangle and its new, as drawn) is tested against every other
+  large sprite's, plotted this pass or not. One that meets none is self-erased (its edges cleared, then stored
+  straight or behind the map); one that meets any is XORed off and on, as the CPC and the Spectrum draw
+  everything. A sprite is only ever stored where no other one is, so the two ways mix exactly: every pass's
+  screen is the same as XORing every sprite (all four logs, 1,580 passes).
+- Where sprites overlap they mix as in both originals.
+- The 8-line sprites stay XORed, off before any large sprite is plotted and on after, so no store meets them.
+- The test: sweep and prune on the list of large sprites sorted by y that the beam ordering needs, kept sorted
+  by an insertion sort (a move of 8 lines at most a pass leaves it nearly sorted).
+- Measured over the four logs (cycles a pass, plotting only; the test not yet written): the median 0-9% over
+  self-erasing alone (which is wrong where sprites overlap), the worst 0-7%; XORing everything costs 18-64% at
+  the median, 9-16% at the worst. The journal has the table.
+
 ---
 
 ## Proposed
@@ -296,21 +312,6 @@ counted with Teddy Boy's `zx02.py`):
 - So: frames stored in the plotter's column order, dithered at build time. Standard ZX02 (D16).
 
 ---
-
-### P14. Overlaps: XORed where large sprites meet (after D36)
-- Each pass, each large sprite's box (its old rectangle and its new, as drawn) is tested against every other
-  large sprite's, plotted this pass or not. One that meets none is self-erased (its edges cleared, then stored
-  straight or behind the map); one that meets any is XORed off and on, as the CPC and the Spectrum draw
-  everything. A sprite is only ever stored where no other one is, so the two ways mix exactly: every pass's
-  screen is the same as XORing every sprite (all four logs, 1,580 passes).
-- Where sprites overlap they mix as in both originals. A masked version (one in front, solid) would use the
-  same test, with the meeting sprites drawn back to front; it can be measured later.
-- The 8-line sprites stay XORed, off before any large sprite is plotted and on after, so no store meets them.
-- The test: sweep and prune on the list of large sprites sorted by y that the beam ordering needs, kept sorted
-  by an insertion sort (a move of 8 lines at most a pass leaves it nearly sorted).
-- Measured over the four logs (cycles a pass, plotting only; the test not yet written): the median 0-9% over
-  self-erasing alone (which is wrong where sprites overlap), the worst 0-7%; XORing everything costs 18-64% at
-  the median, 9-16% at the worst. The journal has the table.
 
 ## Open
 

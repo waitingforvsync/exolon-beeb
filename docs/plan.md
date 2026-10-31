@@ -149,7 +149,7 @@ make the same calls in the same order. Measured 2026-10-31 from `docs/Exolon.tzx
   furthest move a pass, or the vacated strip cleared: whichever measures cheaper).
 - **Over a non-empty tile**: `(tile AND mask) OR sprite`, the tile byte from the tile data, never the screen;
   the vacated bytes from the tile data too.
-- **Over another sprite** (D36, P14): a large sprite whose old or new rectangle meets another's is XORed off
+- **Over another sprite** (D36, D37): a large sprite whose old or new rectangle meets another's is XORed off
   and on that pass, so they mix where they meet as in both originals; the rest self-erase.
 - **Each screen byte is written once a pass**, so nothing is ever seen erased. Sprites go in order of height
   against the beam, each before the beam reaches its top or after it has left its bottom.
