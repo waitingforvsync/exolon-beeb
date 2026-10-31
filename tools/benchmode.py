@@ -10,6 +10,8 @@ the self-erasing one (D7) in src/bench.6502:
   drawn as the BBC clips them) meets another large sprite's box (a sprite not plotted this pass: its rectangle);
   then it's XORed (5, 6). A sprite only ever stored straight where no other one is, so the two ways mix
   exactly: every pass's screen is the same as xor's.
+- hybrid8: as hybrid, a large sprite's box meeting an 8-line sprite's (where it's XORed off or on this pass)
+  making it XORed too: so no store ever meets an 8-line sprite, whatever the order of the plots.
 The 8-line sprites' XORs are left where they are. A pass's order (benchlog.py's) is kept, a 6 where the 3 was
 and a 5 where the 2 was.
 """
@@ -68,7 +70,7 @@ def meet(a, b):
     return a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]
 
 
-def recast(passes, rect, hybrid):
+def recast(passes, rect, hybrid, eights=False):
     drawn = {}                                      # slot: its rectangle on the screen
     out, xored = [], 0
     for cmds in passes:
@@ -81,6 +83,9 @@ def recast(passes, rect, hybrid):
         boxes = {s: box(drawn.get(s), new.get(s, drawn.get(s))) for s in set(drawn) | set(new)}
         boxes = {s: b for s, b in boxes.items() if b}
         touch = {s for s in boxes if any(t != s and meet(boxes[s], boxes[t]) for t in boxes)} if hybrid else None
+        if hybrid and eights:
+            small = [r for c in cmds if c[0] == 4 for r in [rect(*c[1:])] if r]
+            touch |= {s for s in boxes if any(meet(boxes[s], r) for r in small)}
         xor = (lambda s: s in touch) if hybrid else (lambda s: True)
         cast = []
         for cmd in cmds:
@@ -107,10 +112,10 @@ def recast(passes, rect, hybrid):
 
 def main():
     mode, src, dst = sys.argv[1:4]
-    assert mode in ('xor', 'hybrid')
+    assert mode in ('xor', 'hybrid', 'hybrid8')
     sp = gensprites.sprites(initial_memory(), gendata.pairs(read_dsk(gendata.DSK)))
     passes = read(src)
-    out, xored = recast(passes, rect_of(sp), mode == 'hybrid')
+    out, xored = recast(passes, rect_of(sp), mode != 'xor', mode == 'hybrid8')
     write(dst, out)
     plots = sum(1 for cmds in passes for c in cmds if c[0] in (2, 3))
     print(f'{len(out)} passes: {xored} of {plots} large plots XORed')

@@ -68,15 +68,90 @@ def commands(log):
     return out, twice, unshown
 
 
+def objects(log):
+    """The passes as objects, for src/plotpass.6502's plot_pass (bench.6502's commands 10-14): each large sprite
+    plotted (its last plot in the pass) or gone, and each 8-line sprite moved (an erase and the draw PAIRS8
+    pairs it with), put on or taken off: each image the pass XORs off if it's on the screen before the pass,
+    on if it is after. The blank frame (6) is left out."""
+    slots, out, shown = {}, [], Counter()
+    for plots in log:
+        if any(p.kind == 'clear' for p in plots):
+            break
+        large, smalls, pend = {}, [], {}
+        for p in plots:
+            if p.pad:
+                continue
+            if p.kind in ('player', 'obj16'):
+                slot = slots.setdefault(p.save, len(slots))
+                assert slot < 16, 'more large sprites than slots'
+                large[slot] = (10, slot, sprite(p), p.x, p.y) if p.draw else (11, slot)
+            elif p.kind == 'obj8' and p.frame != 6:
+                img = (sprite(p), p.x, p.y)
+                if p.erase:
+                    rec = [img, None]
+                    smalls.append(rec)
+                    if p.caller in plotlog.PAIRS8:
+                        pend[plotlog.PAIRS8[p.caller]] = rec
+                elif p.caller in pend:
+                    pend.pop(p.caller)[1] = img
+                else:
+                    smalls.append([None, img])
+        # each image the pass XORs: taken off if it's on the screen before the pass, put on if it is after (an
+        # odd number of XORs changing which), so every off is of an image there, every image there at a store
+        # is known, and none is XORed twice in one phase (plot_pass XORs a region's offs before its ons); a
+        # record's off and on stay paired where both are kept
+        toggles = Counter()
+        for off, on in smalls:
+            for img in (off, on):
+                if img:
+                    toggles[img] += 1
+        before = {img: shown[img] for img in toggles}
+        after = {img: before[img] ^ (toggles[img] & 1) for img in toggles}
+        offs_done, ons_done, recs = set(), set(), []
+        for off, on in smalls:
+            o = off if off and before[off] and off not in offs_done else None
+            n = on if on and after[on] and on not in ons_done else None
+            if o:
+                offs_done.add(o)
+            if n:
+                ons_done.add(n)
+            if o or n:
+                recs.append([o, n])
+        for img in toggles:                         # (an image's off or on left: its own record)
+            if before[img] and img not in offs_done:
+                recs.append([img, None])
+            if after[img] and img not in ons_done:
+                recs.append([None, img])
+        for img in toggles:
+            shown[img] = after[img]
+        cmds = list(large.values())
+        for off, on in recs:
+            if off and on:
+                cmds.append((12,) + off + on)
+            elif on:
+                cmds.append((13,) + on)
+            elif off:
+                cmds.append((14,) + off)
+        c = bytes(b for cmd in cmds for b in cmd) + b'\0'
+        assert len(c) <= 1024, 'a pass longer than CmdBuf'
+        out.append(c)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('out')
     ap.add_argument('--zone', type=int, default=0)
     ap.add_argument('--passes', type=int, default=400)
     ap.add_argument('--keys', default='random:1')
+    ap.add_argument('--objects', action='store_true', help="the passes as objects (plot_pass's)")
     a = ap.parse_args()
     keys = plotlog.random_keys(int(a.keys.split(':')[1])) if a.keys.startswith('random:') else (lambda i: set(a.keys.split()))
-    passes, twice, unshown = commands(plotlog.run(zone=a.zone, passes=a.passes, keys=keys))
+    log = plotlog.run(zone=a.zone, passes=a.passes, keys=keys)
+    if a.objects:
+        passes, twice, unshown = objects(log), 0, 0
+    else:
+        passes, twice, unshown = commands(log)
     os.makedirs(os.path.dirname(a.out) or '.', exist_ok=True)
     with open(a.out, 'wb') as f:
         for c in passes:

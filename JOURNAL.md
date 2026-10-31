@@ -362,3 +362,50 @@ Plotting, cycles a pass (median / 90% / worst; passes over 40,000), the touch te
 - Left in the walk: the middle bands' lines and entries worked out again each band (about 50 cycles of about
   200), sprites kept within a page (no high byte to step, no read crossing a page; some packing waste). About
   1,000-2,000 cycles a pass between them.
+
+### The plot driver: each object a unit, in order (plot_pass)
+- Racing the beam needs each object plotted as a unit, its 8-line XOR off and on together, not every 8-line
+  sprite off at a pass's start and on at its end (each would be missing for most of a pass: a flicker at 25 Hz).
+  Then no store may meet an 8-line sprite. XORing every large sprite an 8-line one's box meets (D37 extended)
+  was measured first (`benchmode.py hybrid8`): exact, but zone 94's worst pass 61,413 → 72,208 cycles, zone 0's
+  38,171 → 43,094. Not kept.
+- `src/plotpass.6502`'s `plot_pass` (the data bank) takes a pass's objects as the game will give them: the
+  large sprites plotted (slot, sprite, x, y, or gone), the debris (off at, on at) and the other 8-line sprites
+  (by sprite). It works out the large sprites' new rectangles and boxes (old and new together), the touch
+  test (D37), and then regions: the self-erasing ones by their tops, a region running on over gaps under 24
+  lines. An 8-line sprite whose y (where it goes, else where it was) is from 15 lines above a region's top to 8
+  below its bottom is on that region's list (an 8-line sprite moves at most 8 lines a pass and is 8 high, so
+  that's all it can reach; regions 24 lines apart have disjoint reaches); the rest are XORed off and on as
+  they're found (they commute with everything). Then the large sprites by their tops: an XORed one alone, a
+  self-erasing one's region whole (its 8-line sprites off, its large sprites' edges and draws, the 8-line
+  sprites on). The bench (moved to main RAM, `&D01` on, as the data bank is nearly full) decodes
+  `benchlog.py --objects` streams (commands 10-14) into its lists.
+- Binding each 8-line sprite to the large sprites its box meets, with row masks and exact tests, was written
+  first: about 390 cycles a bound debris particle, and in zone 0's grenade passes all 62 particles are in the
+  player's rows (+18,000 cycles). The regions cost about 110.
+- The object streams: each image a pass XORs is taken off if it's on the screen before the pass and put on if
+  it is after, each record's off and on paired where both are kept. A first version reduced each pass to its
+  net XORs and dropped images XORed twice (an object put back where it was; one particle moving onto the
+  spot another left), which left them on the screen unknown to the driver: zones 38 and 94 went wrong in 25
+  and 276 passes. Images put on and taken off within a pass are left out (3,574 XORs against 3,882 in zone 0,
+  15,067 against 18,739 in 94); every pass XORs the same images as before, mod 2.
+- **Every pass's screen is the same as all-XOR's in all four logs** (1,580 passes).
+- Two things the game must give: every 8-line sprite on the screen is in a pass's list (so no store meets one
+  the driver doesn't know of), and an 8-line sprite moves at most 8 lines and 8 pixels a pass (the logs: never
+  more).
+
+Plotting alone (the bench's decoding off), cycles a pass, the hybrid's commands → plot_pass's objects:
+
+| Zone | Median | 90% | Worst | Passes over 40,000 |
+|---|---|---|---|---|
+| 0 | 6,091 → 7,346 | 13,150 → 15,608 | 38,171 → 33,334 | 0 → 0 |
+| 38 | 20,514 → 25,385 | 27,399 → 34,150 | 42,970 → 50,051 | 6 → 18 |
+| 94 | 23,240 → 26,513 | 45,665 → 49,759 | 61,413 → 68,153 | 57 → 71 |
+| 99 | 24,789 → 30,929 | 37,214 → 44,201 | 68,995 → 69,522 | 36 → 72 |
+
+- The hybrid's figures had no per-object work at all (the bench called the plotter); a game's loop over its
+  objects would spend some 40-50 cycles each. The driver's own work is about 23% of a typical zone 99 pass
+  (the rectangles and boxes, a scan of all 16 slots, the touch test, the order, the regions, each rectangle
+  fetched twice), about 1,000 cycles a large sprite, and about 110 a bound 8-line one.
+- The data bank: 15,073 bytes (5,027 packed), 799 free below DataVars. Not yet: waiting for the beam (the order
+  is there), and a check in jsbeeb that no object is plotted while the beam is on its lines.

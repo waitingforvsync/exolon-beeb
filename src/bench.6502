@@ -8,6 +8,12 @@
 \\     4 sprite x y: an 8-line sprite XORed (off in phase 1, on in phase 2)
 \\     5 slot sprite x y: a large sprite XORed off its old place and on at its new
 \\     6 slot: a large sprite XORed off, gone
+\\ Or the pass as objects, for plot_pass (plotpass.6502), which orders and plots them itself:
+\\     10 slot sprite x y: a large sprite plotted there
+\\     11 slot: a large sprite gone
+\\     12 sprite x y sprite' x' y': an 8-line sprite XORed off at the first, on at the second
+\\     13 sprite x y: an 8-line sprite XORed on
+\\     14 sprite x y: an 8-line sprite XORed off
 
 CmdBufSize = 1024
 
@@ -22,6 +28,7 @@ IF DEFINED(BENCHNULL)
     BenchXorOn = bench_null
     BenchDebris = bench_null
     BenchXor8 = bench_null
+    BenchPlotPass = bench_null
 ELSE
     BenchRect = sprite_rect
     BenchDraw = large_draw
@@ -30,6 +37,7 @@ ELSE
     BenchXorOn = large_xor_on
     BenchDebris = debris_xor
     BenchXor8 = xor8
+    BenchPlotPass = plot_pass
 ENDIF
 
 SECTION Workspace
@@ -57,6 +65,9 @@ ENDSECTION
     LDA (cmd),Y:BNE more
     RTS
 .more
+    CMP #10:BCC commands
+    JMP bench_objects                   ; (the pass as objects; and back)
+.commands
     STA op
     CMP #3:BCS notlarge
 
@@ -125,4 +136,95 @@ ENDSECTION
 
 .bench_null                             ; (BENCHNULL's plotter)
     RTS
+
+\\ A pass's objects (commands 10-14) into plot_pass's lists, and plot_pass.
+\\
+\\ Inputs:
+\\     cmd: the first command
+\\
+\\ Outputs:
+\\     A, X, Y: corrupted
+
+.bench_objects
+{
+    ZA_AUTO2 at                         ; local: the next command
+    ZA_AUTO1 op                         ; local: its number
+
+    LDA bench_pass.cmd:STA at
+    LDA bench_pass.cmd+1:STA at+1
+    LDA #0:STA LgCount:STA SmCount:STA DbCount
+.next
+    LDY #0
+    LDA (at),Y:BNE more
+    JSR BenchPlotPass
+    LDA #0:STA LgCount:STA SmCount:STA DbCount
+    RTS
+.more
+    CMP #12:BCS small
+    LDX LgCount:INC LgCount
+    CMP #11:BEQ gone
+    INY:LDA (at),Y:STA LgSlot,X         ; 10: plotted
+    INY:LDA (at),Y:STA LgSpr,X
+    INY:LDA (at),Y:STA LgX,X
+    INY:LDA (at),Y:STA LgY,X
+    LDA #5:JMP on
+.gone
+    INY:LDA (at),Y:STA LgSlot,X
+    LDA #NoSprite:STA LgSpr,X
+    LDA #2:JMP on
+.small
+    STA op
+    INY:LDA (at),Y:DEY                  ; its (first) sprite: the debris has its own list
+    CMP #Sprite8+4:BEQ debris
+    CMP #Sprite8+5:BNE others
+.debris
+    LDX DbCount:INC DbCount
+    LDA op:CMP #13:BEQ debrison
+    BCS debrisoff
+    INY:INY:LDA (at),Y:STA DbOffX,X     ; 12: moved
+    INY:LDA (at),Y:STA DbOffY,X
+    INY:INY:LDA (at),Y:STA DbOnX,X
+    INY:LDA (at),Y:STA DbOnY,X
+    LDA #7:JMP on
+.debrison
+    LDA #NoSprite:STA DbOffX,X
+    INY:INY:LDA (at),Y:STA DbOnX,X
+    INY:LDA (at),Y:STA DbOnY,X
+    LDA #4:JMP on
+.debrisoff
+    LDA #NoSprite:STA DbOnX,X
+    INY:INY:LDA (at),Y:STA DbOffX,X
+    INY:LDA (at),Y:STA DbOffY,X
+    LDA #4:JMP on
+.others
+    LDA op
+    LDX SmCount:INC SmCount
+    CMP #13:BEQ smallon
+    BCS smalloff
+    INY:LDA (at),Y:STA SmOffS,X         ; 12: moved
+    INY:LDA (at),Y:STA SmOffX,X
+    INY:LDA (at),Y:STA SmOffY,X
+    INY:LDA (at),Y:STA SmOnS,X
+    INY:LDA (at),Y:STA SmOnX,X
+    INY:LDA (at),Y:STA SmOnY,X
+    LDA #7:JMP on
+.smallon
+    LDA #NoSprite:STA SmOffS,X
+    INY:LDA (at),Y:STA SmOnS,X
+    INY:LDA (at),Y:STA SmOnX,X
+    INY:LDA (at),Y:STA SmOnY,X
+    LDA #4:JMP on
+.smalloff
+    LDA #NoSprite:STA SmOnS,X
+    INY:LDA (at),Y:STA SmOffS,X
+    INY:LDA (at),Y:STA SmOffX,X
+    INY:LDA (at),Y:STA SmOffY,X
+    LDA #4
+.on
+    CLC:ADC at:STA at
+    BCC @+
+    INC at+1
+.@
+    JMP next
+}
 

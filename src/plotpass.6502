@@ -1,0 +1,559 @@
+\\ plotpass.6502 - a pass's plots (D7, D10, D37): the large sprites' and the 8-line sprites', each a unit (its
+\\ dirty edges and its draw, or its XOR off and on), the large sprites in order of their tops, for racing the beam.
+\\
+\\ A large sprite whose box (its rectangle as drawn and its new one together) meets another large sprite's is
+\\ XORed off and on (D37); one that meets none self-erases. The self-erasing ones, by their tops, make regions of
+\\ lines: one runs on while the next one's top is within 24 lines of its bottom. An 8-line sprite whose lines
+\\ can reach a region's (its y, where it goes or else where it was, from 15 lines above the region's top to 8
+\\ below its bottom: it moves 8 lines a pass at most, and is 8 lines high) is XORed off before the region's
+\\ large sprites are plotted and on after, so no store ever meets an 8-line sprite on the screen, and each pass's
+\\ screen is the same as if everything were XORed. The regions are 24 lines apart, so their reaches are
+\\ disjoint. The other 8-line sprites are plotted as they're found (they commute with everything).
+\\
+\\ The game (for now src/bench.6502) lists the pass's plots: LgCount large sprites (LgSlot, and LgSpr, LgX, LgY:
+\\ where it goes, LgSpr NoSprite if it's gone); DbCount debris (DbOffX, DbOffY where it's XORed off, DbOnX,
+\\ DbOnY where on, either x NoSprite for none); SmCount other 8-line sprites (SmOffS, SmOffX, SmOffY, SmOnS,
+\\ SmOnX, SmOnY likewise, by sprite). An 8-line sprite moves at most 8 lines and 8 pixels a pass.
+
+MaxSmall = 64                           ; 8-line sprites plotted a pass at most, debris aside
+MaxDebris = 100                         ; debris (the original's records)
+MaxRegions = 8                          ; regions a pass (each at least one self-erasing large sprite)
+RegionGap = 24                          ; a region runs on over a gap of fewer lines
+NoSprite = &FF
+NoBox = &FF                             ; BoxX0's for none
+NoRegion = &FF                          ; LgReg's for an XORed one; DbNext's, SmNext's for a list's end
+
+SECTION Workspace
+.LgCount                                ; the pass's large sprites plotted
+    SKIP 1
+.LgSlot                                 ; their slots
+    SKIP MaxSlots
+.LgSpr                                  ; their sprites (NoSprite: gone)
+    SKIP MaxSlots
+.LgX                                    ; where (MODE 0 pixels, lines)
+    SKIP MaxSlots
+.LgY
+    SKIP MaxSlots
+.NewX                                   ; their new rectangles (NewW 0: none)
+    SKIP MaxSlots
+.NewY
+    SKIP MaxSlots
+.NewW
+    SKIP MaxSlots
+.NewH
+    SKIP MaxSlots
+.NewS                                   ; and sprites
+    SKIP MaxSlots
+.BoxX0                                  ; their boxes: columns x0 to x1 - 1, lines y0 to y1 - 1 (x0 NoBox: none)
+    SKIP MaxSlots
+.BoxX1
+    SKIP MaxSlots
+.BoxY0
+    SKIP MaxSlots
+.BoxY1
+    SKIP MaxSlots
+.LgReg                                  ; its region, or NoRegion: XORed
+    SKIP MaxSlots
+.Plotted                                ; by slot: plotted this pass
+    SKIP MaxSlots
+.LiveX0                                 ; the boxes the touch test compares: the plotted ones', the others drawn
+    SKIP MaxSlots
+.LiveX1
+    SKIP MaxSlots
+.LiveY0
+    SKIP MaxSlots
+.LiveY1
+    SKIP MaxSlots
+.LiveOwn                                ; whose: the plot's index, or &FF (not plotted this pass)
+    SKIP MaxSlots
+.Order                                  ; the large sprites with boxes, by their tops
+    SKIP MaxSlots
+.RegY1                                  ; a region's bottom (past)
+    SKIP MaxRegions
+.RegG0                                  ; the y an 8-line sprite needs to be in it: from G0 to G1 - 1
+    SKIP MaxRegions
+.RegG1
+    SKIP MaxRegions
+.RegDb                                  ; its debris and other 8-line sprites, as lists (DbNext, SmNext)
+    SKIP MaxRegions
+.RegSm
+    SKIP MaxRegions
+.RegDone                                ; non-zero: plotted
+    SKIP MaxRegions
+.SmCount                                ; the pass's 8-line sprites plotted
+    SKIP 1
+.SmOffS                                 ; where each is XORed off (NoSprite: none)
+    SKIP MaxSmall
+.SmOffX
+    SKIP MaxSmall
+.SmOffY
+    SKIP MaxSmall
+.SmOnS                                  ; and on
+    SKIP MaxSmall
+.SmOnX
+    SKIP MaxSmall
+.SmOnY
+    SKIP MaxSmall
+.SmNext                                 ; the next in its region's list
+    SKIP MaxSmall
+.DbCount                                ; the pass's debris plotted
+    SKIP 1
+.DbOffX                                 ; where each is XORed off (NoSprite: none)
+    SKIP MaxDebris
+.DbOffY
+    SKIP MaxDebris
+.DbOnX                                  ; and on
+    SKIP MaxDebris
+.DbOnY
+    SKIP MaxDebris
+.DbNext                                 ; the next in its region's list
+    SKIP MaxDebris
+ENDSECTION
+
+\\ A pass's plots.
+\\
+\\ Inputs:
+\\     LgCount, LgSlot, LgSpr, LgX, LgY; DbCount, DbOffX-DbOnY; SmCount, SmOffS-SmOnY: the pass's plots
+\\     the slots: the large sprites as drawn
+\\
+\\ Outputs:
+\\     the screen; the slots as drawn now; LgCount, DbCount, SmCount 0
+\\     A, X, Y: corrupted
+
+.plot_pass
+{
+    ZA_AUTO1 i, t, u                    ; local: a large sprite's plot; temporaries
+    ZA_AUTO1 nlive, norder, nreg        ; local: boxes to compare; large sprites in order; regions
+    ZA_AUTO1 ax0, ax1, ay0, ay1         ; local: a box being compared
+    ZA_AUTO1 k, r                       ; local: an 8-line sprite; a region
+
+    \\ the large sprites: new rectangles, boxes
+
+    LDX #0
+.rects
+    CPX LgCount:BCC rect
+    JMP rected
+.rect
+    STX i
+    LDY LgSlot,X
+    LDA #1:STA Plotted,Y
+    LDA LgSpr,X:CMP #NoSprite:BEQ gone
+    LDA LgY,X:STA t
+    LDA LgX,X:STA u
+    LDA LgSpr,X:TAX
+    LDY t:LDA u:JSR sprite_rect         ; (X kept: the sprite)
+    TXA:LDX i:STA NewS,X
+    LDA rx:STA NewX,X
+    LDA ry:STA NewY,X
+    LDA rh:STA NewH,X
+    LDA rw:STA NewW,X
+    JMP box
+.gone
+    LDA #0:STA NewW,X
+.box
+    LDY LgSlot,X
+    LDA SlotW,Y:BEQ newonly
+    LDA NewW,X:BEQ oldonly
+    LDA SlotX,Y:CMP NewX,X:BCC @+       ; both: from the lesser to the greater end
+    LDA NewX,X
+.@
+    STA BoxX0,X
+    LDA SlotX,Y:CLC:ADC SlotW,Y:STA t
+    LDA NewX,X:CLC:ADC NewW,X:CMP t:BCS @+
+    LDA t
+.@
+    STA BoxX1,X
+    LDA SlotY,Y:CMP NewY,X:BCC @+
+    LDA NewY,X
+.@
+    STA BoxY0,X
+    LDA SlotY,Y:CLC:ADC SlotH,Y:STA t
+    LDA NewY,X:CLC:ADC NewH,X:CMP t:BCS @+
+    LDA t
+.@
+    STA BoxY1,X
+    JMP boxed
+.oldonly
+    LDA SlotX,Y:STA BoxX0,X
+    CLC:ADC SlotW,Y:STA BoxX1,X
+    LDA SlotY,Y:STA BoxY0,X
+    CLC:ADC SlotH,Y:STA BoxY1,X
+    JMP boxed
+.newonly
+    LDA NewW,X:BEQ nobox
+    LDA NewX,X:STA BoxX0,X
+    CLC:ADC NewW,X:STA BoxX1,X
+    LDA NewY,X:STA BoxY0,X
+    CLC:ADC NewH,X:STA BoxY1,X
+    JMP boxed
+.nobox
+    LDA #NoBox:STA BoxX0,X              ; (gone, and nothing drawn)
+.boxed
+    LDA #0:STA LgReg,X                  ; (for now: meeting none)
+    INX
+    JMP rects
+.rected
+
+    \\ the boxes to compare: the plotted ones', and the others drawn
+
+    LDY #0
+    LDX #0
+.plotlive
+    CPX LgCount:BCS others
+    LDA BoxX0,X:CMP #NoBox:BEQ @+
+    STA LiveX0,Y
+    LDA BoxX1,X:STA LiveX1,Y
+    LDA BoxY0,X:STA LiveY0,Y
+    LDA BoxY1,X:STA LiveY1,Y
+    TXA:STA LiveOwn,Y
+    INY
+.@
+    INX:BNE plotlive                    ; (always)
+    ZA_UNREACHABLE
+.others
+    LDX #MaxSlots-1
+.other
+    LDA Plotted,X:BNE @+
+    LDA SlotW,X:BEQ @+
+    LDA SlotX,X:STA LiveX0,Y
+    CLC:ADC SlotW,X:STA LiveX1,Y
+    LDA SlotY,X:STA LiveY0,Y
+    CLC:ADC SlotH,X:STA LiveY1,Y
+    LDA #&FF:STA LiveOwn,Y
+    INY
+.@
+    DEX:BPL other
+    STY nlive
+
+    \\ each pair: the plotted of those that meet XORed (LgReg &FF)
+
+    LDX #0
+.pairs
+    TXA:TAY
+    INY:CPY nlive:BCS paired
+    LDA LiveX0,X:STA ax0
+    LDA LiveX1,X:STA ax1
+    LDA LiveY0,X:STA ay0
+    LDA LiveY1,X:STA ay1
+    DEY
+.pair
+    INY:CPY nlive:BCS pairdone
+    LDA ax0:CMP LiveX1,Y:BCS pair
+    LDA LiveX0,Y:CMP ax1:BCS pair
+    LDA ay0:CMP LiveY1,Y:BCS pair
+    LDA LiveY0,Y:CMP ay1:BCS pair
+    STX t
+    LDA LiveOwn,X:BMI @+
+    TAX:LDA #&FF:STA LgReg,X
+.@
+    LDA LiveOwn,Y:BMI @+
+    TAX:LDA #&FF:STA LgReg,X
+.@
+    LDX t
+    JMP pair
+.pairdone
+    INX:BNE pairs                       ; (always)
+    ZA_UNREACHABLE
+.paired
+
+    \\ the large sprites with boxes in order of their tops (an insertion: they're few)
+
+    LDA #0:STA norder
+    LDX #0
+.lgorder
+    CPX LgCount:BCS lgordered
+    LDA BoxX0,X:CMP #NoBox:BEQ lgnext
+    STX i
+    LDA BoxY0,X:STA t
+    LDY norder
+.shift
+    DEY:BMI place                       ; (to the front)
+    LDX Order,Y:LDA BoxY0,X:CMP t:BEQ place:BCC place
+    TXA:STA Order+1,Y                   ; (a lower one moved up)
+    JMP shift
+.place
+    INY:LDA i:STA Order,Y
+    INC norder
+    LDX i
+.lgnext
+    INX:BNE lgorder                     ; (always)
+    ZA_UNREACHABLE
+.lgordered
+
+    \\ the regions: the self-erasing ones by their tops, a region running on over gaps under RegionGap lines
+
+    LDA #0:STA nreg
+    LDY #0
+.regions
+    CPY norder:BCC region
+    JMP regioned
+.region
+    LDX Order,Y
+    LDA LgReg,X:BMI regnext             ; (XORed)
+    LDA nreg:BEQ newreg
+    STY u:LDY r                         ; the last region
+    LDA BoxY0,X:SEC:SBC #RegionGap:BCC join ; (its top within RegionGap lines of the screen's: the region's)
+    CMP RegY1,Y:BCC join                ; (within RegionGap lines of the region's bottom)
+    LDY u
+    LDA nreg:CMP #MaxRegions:BCC newreg
+    LDA #NoRegion:STA LgReg,X           ; (one too many: XORed)
+    BNE regnext                         ; (always)
+.join
+    TYA:STA LgReg,X
+    LDA BoxY1,X:CMP RegY1,Y:BCC @+
+    STA RegY1,Y                         ; (the region's bottom further down)
+.@
+    LDY u
+    JMP regnext
+.newreg
+    STY u
+    LDY nreg:STY r
+    TYA:STA LgReg,X
+    LDA BoxY1,X:STA RegY1,Y
+    LDA BoxY0,X:SEC:SBC #15:BCS @+      ; its reach's top: 15 lines up
+    LDA #0
+.@
+    STA RegG0,Y
+    LDA #NoRegion:STA RegDb,Y:STA RegSm,Y
+    LDA #0:STA RegDone,Y
+    INC nreg
+    LDY u
+.regnext
+    INY
+    JMP regions
+.regioned
+    LDY nreg
+.reach
+    DEY:BMI reached
+    LDA RegY1,Y:CLC:ADC #8:BCC @+       ; its reach's bottom: 8 lines on (past)
+    LDA #&FF
+.@
+    STA RegG1,Y
+    JMP reach
+.reached
+
+    \\ the debris: on its region's list, or plotted now
+
+    LDX #0
+.dbloop
+    CPX DbCount:BCC db
+    JMP dbdone
+.db
+    LDA DbOnX,X:BMI @+                  ; its y: where it goes, else where it was
+    LDA DbOnY,X:JMP dby
+.@
+    LDA DbOffY,X
+.dby
+    LDY #0
+.dbreg
+    CPY nreg:BCS dbfree
+    CMP RegG0,Y:BCC dbfree              ; (above this region's reach, and below the last's: free)
+    CMP RegG1,Y:BCC dbin
+    INY:BNE dbreg                       ; (always)
+    ZA_UNREACHABLE
+.dbin
+    LDA RegDb,Y:STA DbNext,X            ; (on the region's list)
+    TXA:STA RegDb,Y
+    INX
+    JMP dbloop
+.dbfree
+    STX k
+    LDA DbOffX,X:BMI @+
+    LDY DbOffY,X:JSR debris_xor:LDX k
+.@
+    LDA DbOnX,X:BMI dbnext
+    LDY DbOnY,X:JSR debris_xor:LDX k
+.dbnext
+    INX
+    JMP dbloop
+.dbdone
+
+    \\ the other 8-line sprites: the same
+
+    LDX #0
+.smloop
+    CPX SmCount:BCC sm
+    JMP smdone
+.sm
+    LDA SmOnS,X:CMP #NoSprite:BEQ @+
+    LDA SmOnY,X:JMP smy
+.@
+    LDA SmOffY,X
+.smy
+    LDY #0
+.smreg
+    CPY nreg:BCS smfree
+    CMP RegG0,Y:BCC smfree
+    CMP RegG1,Y:BCC smin
+    INY:BNE smreg                       ; (always)
+    ZA_UNREACHABLE
+.smin
+    LDA RegSm,Y:STA SmNext,X
+    TXA:STA RegSm,Y
+    INX
+    JMP smloop
+.smfree
+    STX k
+    JSR sm_off
+    LDX k:JSR sm_on
+    LDX k
+    INX
+    JMP smloop
+.smdone
+
+    \\ the large sprites by their tops: an XORed one alone, a self-erasing one with its region
+
+    LDA #0:STA u
+.plots
+    LDY u:CPY norder:BCS plotted
+    LDX Order,Y:STX i
+    LDA LgReg,X:BPL inregion
+    JSR xor_large
+    JMP plotnext
+.inregion
+    TAY:LDA RegDone,Y:BNE plotnext      ; (done with its region)
+    STY r
+    JSR plot_region
+.plotnext
+    INC u
+    JMP plots
+.plotted
+
+    \\ the slots' marks cleared
+
+    LDX LgCount
+.unmark
+    DEX:BMI unmarked
+    LDY LgSlot,X
+    LDA #0:STA Plotted,Y
+    BEQ unmark                          ; (always)
+    ZA_UNREACHABLE
+.unmarked
+    LDA #0:STA LgCount:STA DbCount:STA SmCount
+    RTS
+
+\\ A region (r): its 8-line sprites off, its large sprites plotted (self-erasing), its 8-line sprites on.
+
+.plot_region
+    LDA #1:STA RegDone,Y
+    LDX RegDb,Y
+.dboffs
+    BMI dboffed
+    STX k
+    LDA DbOffX,X:BMI @+
+    LDY DbOffY,X:JSR debris_xor:LDX k
+.@
+    LDA DbNext,X:TAX
+    JMP dboffs
+.dboffed
+    LDY r:LDX RegSm,Y
+.smoffs
+    BMI smoffed
+    STX k:JSR sm_off
+    LDX k:LDA SmNext,X:TAX
+    JMP smoffs
+.smoffed
+    LDY u                               ; its large sprites: from this one on, in order
+.members
+    CPY norder:BCS membered
+    LDX Order,Y
+    LDA LgReg,X:CMP r:BNE @+
+    STY t:STX i
+    JSR self_erase
+    LDY t
+.@
+    INY
+    JMP members
+.membered
+    LDY r:LDX RegDb,Y
+.dbons
+    BMI dbonned
+    STX k
+    LDA DbOnX,X:BMI @+
+    LDY DbOnY,X:JSR debris_xor:LDX k
+.@
+    LDA DbNext,X:TAX
+    JMP dbons
+.dbonned
+    LDY r:LDX RegSm,Y
+.smons
+    BMI smonned
+    STX k:JSR sm_on
+    LDX k:LDA SmNext,X:TAX
+    JMP smons
+.smonned
+    RTS
+
+\\ A large sprite (i) self-erasing: its edges cleared, then its draw.
+
+.self_erase
+    LDX i:LDY LgSlot,X
+    LDA NewX,X:STA rx
+    LDA NewY,X:STA ry
+    LDA NewW,X:STA rw
+    LDA NewH,X:STA rh
+    JSR large_edges
+    LDX i:LDY LgSlot,X
+    LDA NewW,X:BEQ segone
+    JSR new_rect
+    JMP large_draw                      ; (and back)
+.segone
+    LDA #0:STA SlotW,Y
+    RTS
+
+\\ A large sprite (i) XORed off and on.
+
+.xor_large
+    LDX i:LDY LgSlot,X
+    JSR large_xor_off
+    LDX i:LDY LgSlot,X
+    LDA NewW,X:BEQ xgone
+    JSR new_rect
+    JMP large_xor_on                    ; (and back)
+.xgone
+    LDA #0:STA SlotW,Y
+    RTS
+
+\\ The new rectangle and data of plot X (X its sprite after; Y kept).
+
+.new_rect
+    LDA NewX,X:STA rx
+    LDA NewY,X:STA ry
+    LDA NewW,X:STA rw
+    LDA NewH,X:STA rh
+    LDA NewS,X:TAX
+    LDA SprLo,X:STA src
+    LDA SprHi,X:STA src+1
+    LDA SprW,X:STA sw
+    RTS
+}
+
+\\ An 8-line sprite but the debris XORed off where it was (sm_off), or on where it goes (sm_on): nothing if none.
+\\
+\\ Inputs:
+\\     X: its index (SmOffS...)
+\\
+\\ Outputs:
+\\     A, X, Y: corrupted
+
+.sm_off
+{
+    ZA_AUTO1 s                          ; local: its sprite
+
+    LDA SmOffS,X:CMP #NoSprite:BEQ none
+    STA s:LDY SmOffY,X:LDA SmOffX,X
+    LDX s:JMP xor8                      ; (and back)
+.none
+    RTS
+}
+
+.sm_on
+{
+    ZA_AUTO1 s                          ; local: its sprite
+
+    LDA SmOnS,X:CMP #NoSprite:BEQ none
+    STA s:LDY SmOnY,X:LDA SmOnX,X
+    LDX s:JMP xor8                      ; (and back)
+.none
+    RTS
+}

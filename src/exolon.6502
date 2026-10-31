@@ -44,6 +44,10 @@ SECTION Exo2, org = LoadFloor, load = &FFFF0000+LoadFloor, exec = &FFFF0000+entr
 
         PADTO NmiOrg
         RTI                             ; stray NMIs
+
+        IF DEFINED(BENCH)
+            INCLUDE "bench.6502"        ; the plotter timed over the original's plots (paging the data's bank)
+        ENDIF
 .maincode_end
     ENDSECTION
 

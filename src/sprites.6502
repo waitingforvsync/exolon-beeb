@@ -611,6 +611,4 @@ NEXT
 }
 ZA_AUTO1 keepx                          ; make_sprite_tables': the byte
 
-IF DEFINED(BENCH)
-    INCLUDE "bench.6502"                ; the plotter timed over the original's plots
-ENDIF
+INCLUDE "plotpass.6502"                ; a pass's plots, in order

@@ -317,6 +317,17 @@ counted with Teddy Boy's `zx02.py`):
 
 ---
 
+### P15. The plot driver: each object a unit, 8-line sprites in regions (after D37)
+- A pass's plots go through one driver (`plot_pass`), from lists the game gives: the large sprites plotted
+  (slot, sprite, x, y, or gone), the debris and the other 8-line sprites (where each is XORed off, where on).
+- Each object is plotted as a unit (edges and draw, or XOR off and on), the large sprites by their tops, for
+  racing the beam. Self-erasing large sprites make regions of lines; the 8-line sprites that can reach a region
+  are XORed off before its large sprites and on after, so no store meets one; the rest go as they're found.
+- Measured over the four logs: exact (every pass's screen as all-XOR's); plotting a median 7,346-30,929
+  cycles a pass, the worst 33,334-69,522 (the journal has the table).
+- The game must list every 8-line sprite on the screen each pass, and move none more than 8 lines and 8
+  pixels a pass.
+
 ## Open
 
 ### O6. An experiment, later: the Spectrum's graphics in MODE 1 with raster colour splits (2026-10-31)
