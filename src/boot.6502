@@ -1,0 +1,107 @@
+\\ boot.6502 - !BOOT, *RUN by SHIFT-BREAK (*OPT 4,2): finds the sideways RAM, unpacks each bank's file into
+\\ its bank, loads EXO2 and runs it. The OS stays alive; this file is assembled on its own.
+
+bankcode = &00                          ; the banks found, for the game (memory.6502's): the code's and
+bankdata = &01                          ; the data's (BASIC's zero page, written once nothing can fail)
+BanksNeeded = 2
+
+BootOrg = &1200                         ; in the DFS's file buffers: no files are open
+BankLoad = &3000                        ; where a bank's packed file loads, to be unpacked
+Exo2Load = &5000                        ; and EXO2 (memory.6502's LoadFloor)
+NameLength = 5                          ; each file's name and its CR
+
+SECTION Boot, filename = "!BOOT", org = BootOrg, load = &FFFF0000+BootOrg, exec = &FFFF0000+boot_entry
+
+ZA_POOL &70..&8F                        ; the OS leaves these to us
+
+\\ Run by *RUN: find the banks, unpack the game into them, load EXO2 and run it.
+\\
+\\ Inputs:
+\\     none
+\\
+\\ Outputs:
+\\     bankcode, bankdata: the banks, for the game; it never returns
+
+.boot_entry
+{
+    ZA_ENTRY
+    ZA_AUTO BanksNeeded, banks          ; local: the banks found, as bankcode and bankdata
+
+    LDA #15:LDX #0:JSR &FFF4            ; OSBYTE 15: the BREAK beep flushed
+    LDA #16:LDX #0:JSR &FFF4            ; OSBYTE 16: the ADC off
+
+    \\ the banks: the highest numbered that take a write and that the OS's ROM type table doesn't list (a
+    \\ ROM image the OS would still call, a filing system held in RAM), found while the OS's screen still
+    \\ shows, for the error. &F4 is written before ROMSEL, so the OS would page it back
+
+    LDA &F4:PHA                         ; the ROM paged in now
+    LDY #BanksNeeded-1                  ; banks still to find, less one
+    LDX #15
+.probe
+    LDA &2A1,X:BNE nope                 ; the OS's ROM type table: one it knows
+    STX &F4:STX &FE30                   ; ROMSEL: bank X at &8000
+    LDA &8000:EOR #&FF:STA &8000
+    EOR #&FF:CMP &8000                  ; Z: it didn't take
+    STA &8000                           ; put it back (STA keeps Z)
+    BEQ nope
+    STX banks,Y:ZA_INDEXEDBY 0..BanksNeeded-1
+    DEY:BMI found
+.nope
+    DEX
+    BPL probe
+    PLA:STA &F4:STA &FE30               ; ROMSEL: the ROM back
+    BRK
+    EQUB 0
+    EQUS "Exolon needs ", AS_STRING(BanksNeeded * 16), "K of sideways RAM", 0
+    ZA_UNREACHABLE                      ; the BRK doesn't come back
+.found
+
+    \\ each bank's file loaded at BankLoad (its catalogue's address, so OSFILE's write-back leaves the block
+    \\ ready for the next) and unpacked into its bank
+
+    FOR i = 0..BanksNeeded-1
+        LDA #LO(BankNames+i*NameLength):STA OsfileBlock
+        LDA #HI(BankNames+i*NameLength):STA OsfileBlock+1
+        LDA #&FF:LDX #LO(OsfileBlock):LDY #HI(OsfileBlock):JSR &FFDD ; OSFILE: load
+        LDA banks+i:STA &F4:STA &FE30   ; ROMSEL: the bank
+        LDA #LO(BankLoad):STA zx.src
+        LDA #HI(BankLoad):STA zx.src+1
+        LDA #LO(&8000):STA zx.dst
+        LDA #HI(&8000):STA zx.dst+1
+        JSR zx.unpack
+    NEXT
+    PLA:STA &F4:STA &FE30               ; ROMSEL: the ROM back
+
+    \\ EXO2 loaded at its own address (exec's low byte non-zero), then the banks handed over and it run from
+    \\ the exec address OSFILE wrote back
+
+    LDA #LO(Exo2Name):STA OsfileBlock
+    LDA #HI(Exo2Name):STA OsfileBlock+1
+    LDA #&FF:STA OsfileBlock+6
+    LDX #LO(OsfileBlock):LDY #HI(OsfileBlock):JSR &FFDD ; OSFILE: load (A = &FF)
+    FOR i = 0..BanksNeeded-1
+        LDA banks+i:STA bankcode+i
+    NEXT
+    JMP (OsfileBlock+6)                 ; EXO2's entry
+    ASSERT LO(OsfileBlock+6) <> &FF, "JMP (ind)'s pointer can't end a page on an NMOS 6502"
+    ZA_CANJUMP Exo2Load                 ; (another assembly's code, in the file loaded there)
+}
+
+.BankNames                              ; the banks' files, each a name and a CR
+    EQUS "EXOC", 13
+    EQUS "EXOD", 13
+    ASSERT P% - BankNames == BanksNeeded * NameLength, "a name for each bank"
+.Exo2Name
+    EQUS "EXO2", 13
+.OsfileBlock                            ; OSFILE's block: the name, then the load address
+    EQUW 0
+    EQUD &FFFF0000 + BankLoad           ; (in the I/O processor, Tube or no Tube)
+    EQUD 0                              ; exec: its low byte 0, so the load goes to the address above
+    SKIP 8
+
+.zx
+{
+    INCLUDE "dzx02.6502"
+}
+
+ENDSECTION

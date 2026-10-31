@@ -1,0 +1,51 @@
+\\ exolon.6502 - the game's files: EXOC and EXOD, the sideways RAM banks' images (code and data), each packed by
+\\ ZX02 (!BOOT loads each and unpacks it into a bank it found), and EXO2, main RAM's code packed by ZX02, then
+\\ the loader that unpacks it into place.
+\\
+\\ No code in one bank reads the other's data or calls into it: each routine is in the bank with its data, or
+\\ in main RAM, paging in the bank whose data it reads (Teddy Boy's rule).
+
+INCLUDE "zx02.6502"                     ; the compressor, as FUNCTIONs: the sections' transform
+INCLUDE "constants.6502"
+INCLUDE "memory.6502"
+INCLUDE "macros.6502"
+
+SECTION CodeFile, filename = "EXOC", load = &FFFF0000+BankLoad
+    SECTION SwramCode, org = SwramOrg, guard = SwramEnd, transform = "zx02"
+        EQUS "Exolon's zones, packed, and their decoder" ; (to come: Phase 2)
+    ENDSECTION
+ENDSECTION
+
+SECTION DataFile, filename = "EXOD", load = &FFFF0000+BankLoad
+    SECTION SwramData, org = SwramOrg, guard = SwramEnd, transform = "zx02"
+        EQUS "Exolon's graphics and their plotters" ; (to come: Phase 2)
+    ENDSECTION
+ENDSECTION
+
+\\ Main RAM's code runs on from &121 with no gaps (D20), each piece placed to fit round the bytes that can't
+\\ move: IRQ1V, &258 and the RTI at &D00. The workspace follows it (memory.6502).
+
+SECTION Exo2, org = LoadFloor, load = &FFFF0000+LoadFloor, exec = &FFFF0000+entry, filename = "EXO2", guard = &8000
+.maincode_image
+    SECTION MainCode, org = MainCodeOrg, guard = ScreenAddr, transform = "zx02"
+        INCLUDE "irq.6502"              ; the frame's interrupt and the keys
+        INCLUDE "game.6502"             ; the main loop
+        INCLUDE "../build/gen/pens.6502"    ; the pens' dithered bytes (tools/gendata.py)
+
+        PADTO Irq1vAddr
+        EQUW irq                        ; IRQ1V
+
+        INCLUDE "testcard.6502"         ; the display test, for now
+
+        PADTO BreakAddr
+        EQUB 2                          ; clear memory on BREAK
+
+        INCLUDE "marker.6502"           ; the display test's marker, for now
+
+        PADTO NmiOrg
+        RTI                             ; stray NMIs
+.maincode_end
+    ENDSECTION
+
+    INCLUDE "entry.6502"
+ENDSECTION

@@ -1,0 +1,65 @@
+\\ irq.6502 - the frame's interrupt: System VIA T1, once a frame as the beam leaves the screen's last line (no
+\\ vsync after the loader's sync). It counts frames and reads the keys; port A and the addressable latch are
+\\ the IRQ's alone. In main RAM, so it's there whatever's paged in.
+
+ZA_AUTO1 irqframes                      ; out: frames, counted at the screen's bottom
+ZA_AUTO1 keys                           ; out: keys down at any frame since wait_pass took them
+
+\\ T1's period: a frame. Its reload ends &FE, so one write to T1L-H acknowledges it
+
+FramePeriod = FrameRows * 8 * 64 - 2
+ASSERT LO(FramePeriod) == &FE, "T1's reload: low byte &FE"
+
+\\ The game's keys (D14, D17), internal numbers, key n to bit n: Z left, X right, : up, / down, RETURN fire
+
+GameKeys = {&61, &42, &48, &68, &49}
+KeyLeft = 1
+KeyRight = 2
+KeyUp = 4
+KeyDown = 8
+KeyFire = 16
+KeysAll = (1 << LEN(GameKeys)) - 1
+ASSERT LEN(GameKeys) == 5 AND KeysAll == KeyLeft + KeyRight + KeyUp + KeyDown + KeyFire, "a key a bit"
+
+\\ The IRQ1V handler. T1 is the only interrupt enabled, so it's the source.
+\\
+\\ Inputs:
+\\     A: 0 (the MOS's entry leaves it so: AND #&10 on the pushed flags, B clear)
+\\     &FC: A, as the MOS saved it
+\\     keys: those gathered since wait_pass took them
+\\
+\\ Outputs:
+\\     irqframes: one more
+\\     keys: and those down now added (GameKeys' bits)
+\\     A, X, Y: preserved
+
+.irq
+{
+    ZA_INTERRUPT
+    ZA_AUTO1 irqx, irqy                 ; local: X and Y, kept
+
+    STX irqx
+    LDX #HI(FramePeriod):STX &FE47      ; system VIA: T1L-H, the period as it was: T1 acknowledged
+    INC irqframes
+    STY irqy
+
+    \\ each key's bit rolls into A, clear if it's down, the first read ending in the top key's bit, A's own 0s
+    \\ above them; then flipped
+
+    LDX #LEN(GameKeys)-1
+.key
+    LDY GameKeyTable,X:STY &FE4F        ; system VIA: ORA without handshake, the key's number
+    CPY &FE4F                           ; C clear if down: bits 0-6 read back as Y, bit 7 the key
+    ROL A
+    DEX:BPL key
+    EOR #KeysAll
+    ORA keys:STA keys
+
+    LDY irqy:LDX irqx
+    LDA &FC
+    RTI
+}
+
+.GameKeyTable                           ; key n to bit n: the first read ends in the top bit (Portal's loop)
+    EQUB GameKeys
+ASSERT HI(GameKeyTable) == HI(GameKeyTable + LEN(GameKeys) - 1), "GameKeyTable: within a page"

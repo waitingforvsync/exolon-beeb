@@ -1,0 +1,19 @@
+\\ constants.6502 - the screen's geometry and the frame's timing, derived: the CPC's 64 bytes by 24 rows (D1),
+\\ one screen raced against the beam (D9), 22 rows of playfield over 2 of status; a pass every 2 frames (D8).
+
+ScreenColumns = 64                      ; bytes a line, 128 MODE 2 pixels: the CPC's width
+RowBytes = ScreenColumns * 8            ; a character row: 512 bytes
+PlayRows = 22                           ; the playfield: 176 lines
+StatusRows = 2                          ; the status: ammo, grenades, points, lives, zones
+ScreenRows = PlayRows + StatusRows      ; 192 lines
+FrameRows = 39                          ; 312 lines
+
+ScreenHSyncPos = 98 - (80 - ScreenColumns) DIV 2    ; centred as exhale centres a narrower screen: 90
+ScreenVSyncPos = 35 - (32 - ScreenRows) DIV 2       ; the vsync's row in the frame: 31
+VSyncPulseWidth = 2                     ; lines (R3's top nybble)
+
+FramesPerPass = 2                       ; 25 passes a second, locked to vsync (D8)
+
+UlaMode2 = &F4                          ; the Video ULA's control register: MODE 2
+R8On = &C0                              ; CRTC R8: the display on, no cursor, not interlaced
+R8Off = &F0                             ; and off

@@ -1,0 +1,155 @@
+\\ entry.6502 - the loader, EXO2's entry point (exhale's, as Teddy Boy's and Chase H.Q.'s): takes the machine
+\\ over, unpacks main RAM's code, starts the frame's interrupt and the game.
+
+\\ It comes last in the file, in the screen, so nothing it writes reaches it: main RAM's code unpacks to &121
+\\ on (IRQ1V and &258 included), below the file. The game draws over the screen, and the loader with it,
+\\ before turning the display on.
+
+\\ Take the machine over, page in the code's bank, set up the screen, unpack main RAM's code, sync to vsync,
+\\ start T1, and run the game.
+\\
+\\ Inputs:
+\\     bankcode, bankdata: the banks
+\\
+\\ Outputs:
+\\     none: it goes on to the game
+
+.entry
+{
+    ZA_ENTRY
+    CLD
+    CLI
+
+    \\ the OS shut down
+
+    ZA_AUTO2 osbyte                     ; local: the MOS's default vectors
+
+    LDA &FFB7:STA osbyte                ; the MOS's default vector table
+    LDA &FFB8:STA osbyte+1
+    LDY #10
+    LDA (osbyte),Y:STA &20A:INY         ; BYTEV, the MOS's own
+    LDA (osbyte),Y:STA &20B
+    LDA #19:JSR &FFF4                   ; OSBYTE 19, vsync: the calls below hold interrupts off a while
+    LDA #16:LDX #0:JSR &FFF4            ; OSBYTE 16: the ADC off
+    LDA #143:LDX #12:LDY #255:JSR &FFF4 ; OSBYTE 143: NMIs claimed from the filing system
+    LDA #140:LDX #0:JSR &FFF4           ; OSBYTE 140, *TAPE: the DFS deselected
+    LDA #19:JSR &FFF4                   ; vsync before changing the CRTC
+
+    SEI
+    LDX #LO(StackTop):TXS
+    LDA #StackSentinel:STA &100         ; under the stack: changed only if it overflows
+
+    \\ the CRTC: one 39-row frame of 24 rows shown, the display off until the game has drawn the screen
+
+    LDX #13
+.crtc
+    STX &FE00                           ; CRTC: the register
+    LDA CrtcRegs,X:STA &FE01            ; CRTC: its value
+    DEX
+    BPL crtc
+
+    \\ the Video ULA: MODE 2; logical colours 0-7 as the physical ones, 8-15 the same, so bit 3 of a pixel
+    \\ shows nothing (P10)
+
+    LDA #UlaMode2:STA &FE20             ; video ULA: control
+    LDX #15
+.palette
+    LDA PalVals,X:STA &FE21             ; video ULA: palette
+    DEX
+    BPL palette
+
+    \\ the code's bank paged in for good (no OS to tell); main RAM's code unpacked
+
+    LDA bankcode:STA &FE30              ; ROMSEL
+    LDA #LO(maincode_image):STA zx.src
+    LDA #HI(maincode_image):STA zx.src+1
+    LDA #LO(MainCodeOrg):STA zx.dst
+    LDA #HI(MainCodeOrg):STA zx.dst+1
+    JSR zx.unpack
+
+    \\ the VIAs: System VIA T1 free-running, its only interrupt; the keyboard scanned by hand; the ACIA reset,
+    \\ in case a *FX2 left its interrupts on
+
+    LDA #&7F:STA &FE4E:STA &FE6E        ; system, user VIAs: IER, every interrupt off
+    STA &FE4D:STA &FE6D                 ; IFR: every flag cleared
+    STA &FE43                           ; system VIA: DDRA, PA0-6 out, PA7 in (the keyboard)
+    LDA #&C0:STA &FE4E                  ; system VIA: IER, T1 only
+    LDA #&40:STA &FE4B                  ; system VIA: ACR, T1 free-running
+    LDA #&0F:STA &FE42                  ; system VIA: DDRB, PB0-3 drive the addressable latch
+    LDX #&03:STX &FE40                  ; addressable latch: keyboard auto-scan off
+    INX:STX &FE4C                       ; system VIA: PCR 4, CA1 on vsync's falling edge
+    STX &FE40:INX:STX &FE40             ; latch bits 4 and 5 low: the 16K wrap (never reached)
+    LDA #3:STA &FE08                    ; ACIA: master reset
+
+    \\ the IRQ's state: no frames, no keys
+
+    LDA #0:STA irqframes:STA keys
+
+    \\ synced to vsync (hexwab's and tricky's): to within ~10 cycles, then exactly by waiting a cycle short
+    \\ of a frame until the vsync's flag isn't set
+
+    LDA #2:STA &FE4D                    ; system VIA: IFR, CA1 cleared
+.waitforvsync
+    BIT &FE4D                           ; system VIA: IFR
+    BEQ waitforvsync
+IF HI(P%) <> HI(P% + 17)
+    JMP syncloop                        ; the loop all in one page
+    ALIGN &100
+ENDIF
+.syncloop
+    STA &FE4D       ; 6
+    LDX #209        ; 2
+.outerloop
+    LDY #37         ; 2
+.innerloop
+    DEY             ; 2
+    BNE innerloop   ; 3/2 (5 * 37 + 2 - 1 = 186)
+    DEX             ; 2
+    BNE outerloop   ; 3/2 ((186 + 2 + 3) * 209 + 2 - 1 = 39,920)
+    BIT &FE4D       ; 6
+    BNE syncloop    ; 3: 39,935, a cycle short of a frame, until no vsync came
+    ASSERT HI(syncloop) == HI(P%), "the sync loop runs in one page"
+
+    \\ T1 to the screen's bottom: the vsync's flag comes VSyncPulseWidth lines after it starts, the frame ends
+    \\ FrameRows - ScreenVSyncPos rows after that, and the screen's last row ends ScreenRows rows into the
+    \\ next. Less the latency to the handler (the timer's setting below 18, IRQ 7, the MOS's entry 19). Then a
+    \\ frame a period
+
+    Latency = (18 + 7 + 19 + 1) DIV 2
+    InitialTimer = ((FrameRows - ScreenVSyncPos + ScreenRows) * 8 - VSyncPulseWidth) * 64 - Latency
+
+    LDA #LO(InitialTimer):STA &FE44     ; system VIA: T1C-L
+    LDA #HI(InitialTimer):STA &FE45     ; T1C-H: started
+    LDA #LO(FramePeriod):STA &FE46      ; T1L-L: then a frame a period
+    LDA #HI(FramePeriod):STA &FE47      ; T1L-H
+    CLI
+    JMP game
+}
+
+.CrtcRegs
+    EQUB 127                            ; R0: horizontal total
+    EQUB ScreenColumns                  ; R1: horizontal displayed
+    EQUB ScreenHSyncPos                 ; R2: hsync position
+    EQUB 8 + (VSyncPulseWidth << 4)     ; R3: sync widths
+    EQUB FrameRows - 1                  ; R4: vertical total
+    EQUB 0                              ; R5: vertical total adjust
+    EQUB ScreenRows                     ; R6: vertical displayed
+    EQUB ScreenVSyncPos                 ; R7: vsync position
+    EQUB R8Off                          ; R8: interlace, display off
+    EQUB 7                              ; R9: scanlines a row, less one
+    EQUB 32                             ; R10: cursor start (hidden)
+    EQUB 7                              ; R11: cursor end
+    EQUB HI(ScreenAddr DIV 8)           ; R12: start, high
+    EQUB LO(ScreenAddr DIV 8)           ; R13: start, low
+
+.PalVals
+    EQUB (0..15) * 16 + (((0..15) AND 7) EOR 7) ; logical c: physical c AND 7 (the ULA takes it EOR 7)
+
+\\ The decompressor, for main RAM's code
+
+.zx
+{
+    INCLUDE "dzx02.6502"
+}
+
+ASSERT P% <= &8000, "EXO2 reaches &8000"

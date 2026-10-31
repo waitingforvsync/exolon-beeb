@@ -1,0 +1,40 @@
+\\ memory.6502 - where everything lives once the game has the machine: the zero page pool, main RAM's
+\\ regions, and its workspace, as virtual sections claimed where they're used.
+
+\\   &0000  zero page: the banks' numbers at &00-&01 (!BOOT writes them), then the pool, bar &FC
+\\   &0100  the stack's sentinel, then the stack: 32 bytes
+\\   &0121  main RAM's code, with no gaps (D20), round what can't move: IRQ1V at &204, &258 = 2 (clear on
+\\          BREAK), an RTI at &D00 for stray NMIs (claimed from the filing system)
+\\   ...    the workspace, from the code's end to the screen: variables, tables the loader makes, what's
+\\          unpacked for the zone in play
+\\   &5000  the screen: 22 rows of playfield, then the status's 2 at &7C00 (D9). EXO2 loads here: main RAM's
+\\          code packed by ZX02, then its loader; all of it drawn over once the game's started
+\\   &8000  sideways RAM: each routine in the bank with the data it reads (Teddy Boy's rule)
+
+ZA_POOL &02..&FB, &FD..&FF              ; &FC: the MOS's IRQ entry saves A there
+
+bankcode = &00                          ; the sideways RAM banks !BOOT found (it writes them itself, as
+bankdata = &01                          ; boot.6502 has them): the code's, paged in, and the data's
+BanksNeeded = 2
+
+StackSentinel = &5A                     ; at &100, under the stack: changed only if it overflows
+StackTop = &0120                        ; 32 bytes of stack, &101 up
+MainCodeOrg = &0121
+Irq1vAddr = &0204                       ; the MOS's IRQ1V, in the code's image
+BreakAddr = &0258                       ; OSBYTE 200's byte: 2, clear memory on BREAK
+NmiOrg = &0D00                          ; an RTI, for stray NMIs
+WorkspaceOrg = maincode_end             ; (exolon.6502's: the code's end)
+ScreenAddr = &5000
+StatusAddr = ScreenAddr + PlayRows * RowBytes
+LoadFloor = ScreenAddr                  ; EXO2 loads no lower: main RAM's code unpacks below it
+BankLoad = &3000                        ; where !BOOT loads a bank's packed file (boot.6502's)
+SwramOrg = &8000
+SwramEnd = &C000
+
+ASSERT MainCodeOrg == StackTop + 1, "main RAM's code starts straight after the stack"
+ASSERT ScreenAddr + ScreenRows * RowBytes == &8000, "the screen fills to &8000: no hardware wrap"
+ASSERT LO(ScreenAddr DIV 8) == 0, "R13 is 0"
+ASSERT StatusAddr == &7C00, "the status rows at &7C00"
+
+SECTION Workspace, org = WorkspaceOrg, guard = ScreenAddr, virtual = TRUE
+ENDSECTION
