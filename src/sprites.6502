@@ -606,9 +606,72 @@ NEXT
 .@
     TYA:EOR #&FF:STA Hole,X
     TYA:STX keepx:AND keepx:STA Keep,X
+    TXA:AND #&AA:LSR A:STA keepx        ; the pixels swapped: the left's bits to the right's, and back
+    TXA:AND #&55:ASL A:ORA keepx:STA Swap,X
     INX:BNE byte
     RTS
 }
 ZA_AUTO1 keepx                          ; make_sprite_tables': the byte
+
+SECTION Workspace
+.Swap                                   ; a byte with its two pixels swapped (made by the loader)
+    SKIP 256
+ENDSECTION
+
+\\ A large sprite mirrored in place (D29): each band's columns in reverse and each byte's pixels swapped. The
+\\ mirror of a frame at shift s is that same sprite mirrored, its offset s + 6 - DX - W (for the 32-line set's
+\\ 12-pixel frames): doing it twice undoes it.
+\\
+\\ Inputs:
+\\     X: the sprite (the 32-line set's)
+\\
+\\ Outputs:
+\\     its data and SprDX
+\\     A, Y: corrupted; X preserved
+
+.mirror_sprite
+{
+    ZA_AUTO2 mp                         ; local: the band
+    ZA_AUTO1 bands, stride, ya, yb, t, sx   ; local: bands left; 8 × W; a column's byte and its mirror's;
+                                        ; a byte; the sprite
+
+    LDA SprW,X:BNE @+
+    RTS                                 ; (a blank frame)
+.@
+    STX sx
+    ASL A:ASL A:ASL A:STA stride
+    LDA SprLo,X:STA mp
+    LDA SprHi,X:STA mp+1
+    LDA SprH,X:CLC:ADC #7:LSR A:LSR A:LSR A:STA bands
+    TXA:AND #1:CLC:ADC #6:SEC:SBC SprDX,X:SEC:SBC SprW,X:STA SprDX,X
+.band
+    LDA #0:STA ya                       ; column k's line 0, and column W - 1 - k's
+    LDA stride:SEC:SBC #8:STA yb
+.pair
+    LDA ya:CMP yb:BCS middle            ; (met, or past each other)
+.lines
+    LDY ya:LDA (mp),Y:TAX:LDA Swap,X:STA t
+    LDY yb:LDA (mp),Y:TAX:LDA Swap,X
+    LDY ya:STA (mp),Y
+    LDY yb:LDA t:STA (mp),Y
+    INC yb
+    INC ya:LDA ya:AND #7:BNE lines
+    LDA yb:SEC:SBC #16:STA yb           ; (yb 8 on: back to the column before)
+    JMP pair
+.middle
+    BNE banddone                        ; (past each other: an even width)
+    LDY ya                              ; the middle column: each byte's pixels swapped
+.mid
+    LDA (mp),Y:TAX:LDA Swap,X:STA (mp),Y
+    INY:TYA:AND #7:BNE mid
+.banddone
+    LDA mp:CLC:ADC stride:STA mp
+    BCC @+
+    INC mp+1
+.@
+    DEC bands:BNE band
+    LDX sx
+    RTS
+}
 
 INCLUDE "plotpass.6502"                ; a pass's plots, in order
