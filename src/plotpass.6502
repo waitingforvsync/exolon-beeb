@@ -19,6 +19,12 @@ MaxSmall = 64                           ; 8-line sprites plotted a pass at most,
 MaxDebris = 100                         ; debris (the original's records)
 MaxRegions = 8                          ; regions a pass (each at least one self-erasing large sprite)
 RegionGap = 24                          ; a region runs on over a gap of fewer lines
+BeamTop = 30                            ; T1C-H's steps (4 lines, 256us) from the frame's interrupt (line 192) to
+                                        ; line 0: (312 - 192) / 4
+BeamSteps = 78                          ; a frame's steps: T1C-H counts 77 to 0
+XorTime = 4                             ; an XORed large sprite's time, in steps (512 cycles), besides its bytes'
+SelfTime = 2                            ; a self-erasing one's, or a region's
+
 NoSprite = &FF
 NoBox = &FF                             ; BoxX0's for none
 NoRegion = &FF                          ; LgReg's for an XORed one; DbNext's, SmNext's for a list's end
@@ -68,7 +74,25 @@ SECTION Workspace
     SKIP MaxSlots
 .Order                                  ; the large sprites with boxes, by their tops
     SKIP MaxSlots
-.RegY1                                  ; a region's bottom (past)
+.RegY0                                  ; a region's large sprites' lines: top, and bottom (past)
+    SKIP MaxRegions
+.RegY1
+    SKIP MaxRegions
+.RegX0                                  ; and columns: left, and right (past)
+    SKIP MaxRegions
+.RegX1
+    SKIP MaxRegions
+.RegXG0                                 ; the column (x DIV 2) an 8-line sprite needs to be in it: XG0 to XG1 - 1
+    SKIP MaxRegions
+.RegXG1
+    SKIP MaxRegions
+.RegLo                                  ; the least and greatest y of its 8-line sprites
+    SKIP MaxRegions
+.RegHi
+    SKIP MaxRegions
+.RegM                                   ; its large sprites, and its 8-line sprites
+    SKIP MaxRegions
+.RegN
     SKIP MaxRegions
 .RegG0                                  ; the y an 8-line sprite needs to be in it: from G0 to G1 - 1
     SKIP MaxRegions
@@ -78,8 +102,20 @@ SECTION Workspace
     SKIP MaxRegions
 .RegSm
     SKIP MaxRegions
-.RegDone                                ; non-zero: plotted
+.RegDone                                ; non-zero: made an item
     SKIP MaxRegions
+.ItemId                                 ; an item: an XORed large sprite's plot, or a region (+ &80)
+    SKIP MaxSlots
+.ItemW0                                 ; when the beam's on its lines, in T1C-H's 4-line steps since the frame's
+    SKIP MaxSlots                       ; interrupt (line 0 at BeamTop): W0 to W1 - 1
+.ItemW1
+    SKIP MaxSlots
+.ItemD                                  ; how long it takes, at most, in the same steps
+    SKIP MaxSlots
+.ItemDone
+    SKIP MaxSlots
+.ItemLong                               ; non-zero: too long for any gap in the beam (plotted once it's past)
+    SKIP MaxSlots
 .SmCount                                ; the pass's 8-line sprites plotted
     SKIP 1
 .SmOffS                                 ; where each is XORed off (NoSprite: none)
@@ -126,6 +162,7 @@ ENDSECTION
     ZA_AUTO1 nlive, norder, nreg        ; local: boxes to compare; large sprites in order; regions
     ZA_AUTO1 ax0, ax1, ay0, ay1         ; local: a box being compared
     ZA_AUTO1 k, r                       ; local: an 8-line sprite; a region
+    ZA_AUTO1 nitem, nleft, now          ; local: items, those still to plot; the beam
 
     \\ the large sprites: new rectangles, boxes
 
@@ -289,7 +326,9 @@ ENDSECTION
     JMP regioned
 .region
     LDX Order,Y
-    LDA LgReg,X:BMI regnext             ; (XORed)
+    LDA LgReg,X:BPL @+
+    JMP regnext                         ; (XORed)
+.@
     LDA nreg:BEQ newreg
     STY u:LDY r                         ; the last region
     LDA BoxY0,X:SEC:SBC #RegionGap:BCC join ; (its top within RegionGap lines of the screen's: the region's)
@@ -297,25 +336,37 @@ ENDSECTION
     LDY u
     LDA nreg:CMP #MaxRegions:BCC newreg
     LDA #NoRegion:STA LgReg,X           ; (one too many: XORed)
-    BNE regnext                         ; (always)
+    JMP regnext
 .join
     TYA:STA LgReg,X
     LDA BoxY1,X:CMP RegY1,Y:BCC @+
     STA RegY1,Y                         ; (the region's bottom further down)
 .@
+    LDA BoxX0,X:CMP RegX0,Y:BCS @+
+    STA RegX0,Y
+.@
+    LDA BoxX1,X:CMP RegX1,Y:BCC @+
+    STA RegX1,Y
+.@
+    LDA RegM,Y:CLC:ADC #1:STA RegM,Y
     LDY u
     JMP regnext
 .newreg
     STY u
     LDY nreg:STY r
     TYA:STA LgReg,X
+    LDA BoxY0,X:STA RegY0,Y
     LDA BoxY1,X:STA RegY1,Y
+    LDA BoxX0,X:STA RegX0,Y
+    LDA BoxX1,X:STA RegX1,Y
     LDA BoxY0,X:SEC:SBC #15:BCS @+      ; its reach's top: 15 lines up
     LDA #0
 .@
     STA RegG0,Y
     LDA #NoRegion:STA RegDb,Y:STA RegSm,Y
-    LDA #0:STA RegDone,Y
+    LDA #&FF:STA RegLo,Y
+    LDA #0:STA RegDone,Y:STA RegHi,Y:STA RegN,Y
+    LDA #1:STA RegM,Y
     INC nreg
     LDY u
 .regnext
@@ -329,6 +380,11 @@ ENDSECTION
     LDA #&FF
 .@
     STA RegG1,Y
+    LDA RegX0,Y:SEC:SBC #6:BCS @+       ; across: an 8-line sprite is 3 columns, and moves 4 at most
+    LDA #0
+.@
+    STA RegXG0,Y
+    LDA RegX1,Y:CLC:ADC #4:STA RegXG1,Y
     JMP reach
 .reached
 
@@ -348,10 +404,24 @@ ENDSECTION
 .dbreg
     CPY nreg:BCS dbfree
     CMP RegG0,Y:BCC dbfree              ; (above this region's reach, and below the last's: free)
-    CMP RegG1,Y:BCC dbin
+    CMP RegG1,Y:BCC dbiny
     INY:BNE dbreg                       ; (always)
     ZA_UNREACHABLE
-.dbin
+.dbiny
+    STA t                               ; (its y)
+    LDA DbOnX,X:BPL @+                  ; its column: where it goes, else where it was
+    LDA DbOffX,X
+.@
+    LSR A
+    CMP RegXG0,Y:BCC dbfree
+    CMP RegXG1,Y:BCS dbfree
+    LDA t:CMP RegLo,Y:BCS @+            ; (the region's 8-line sprites' least y, and greatest)
+    STA RegLo,Y
+.@
+    CMP RegHi,Y:BCC @+
+    STA RegHi,Y
+.@
+    LDA RegN,Y:CLC:ADC #1:STA RegN,Y
     LDA RegDb,Y:STA DbNext,X            ; (on the region's list)
     TXA:STA RegDb,Y
     INX
@@ -384,10 +454,26 @@ ENDSECTION
 .smreg
     CPY nreg:BCS smfree
     CMP RegG0,Y:BCC smfree
-    CMP RegG1,Y:BCC smin
+    CMP RegG1,Y:BCC sminy
     INY:BNE smreg                       ; (always)
     ZA_UNREACHABLE
-.smin
+.sminy
+    STA t
+    LDA SmOnS,X:CMP #NoSprite:BEQ @+
+    LDA SmOnX,X:JMP smx
+.@
+    LDA SmOffX,X
+.smx
+    LSR A
+    CMP RegXG0,Y:BCC smfree
+    CMP RegXG1,Y:BCS smfree
+    LDA t:CMP RegLo,Y:BCS @+
+    STA RegLo,Y
+.@
+    CMP RegHi,Y:BCC @+
+    STA RegHi,Y
+.@
+    LDA RegN,Y:CLC:ADC #1:STA RegN,Y
     LDA RegSm,Y:STA SmNext,X
     TXA:STA RegSm,Y
     INX
@@ -401,23 +487,122 @@ ENDSECTION
     JMP smloop
 .smdone
 
-    \\ the large sprites by their tops: an XORed one alone, a self-erasing one with its region
+    \\ the items, by their tops: each XORed large sprite, each region with 8-line sprites, and each self-erasing
+    \\ large sprite of one without; with when the beam is on their lines (a region's: its large sprites', and its
+    \\ 8-line sprites' from 8 above the least y to 16 below the greatest) and how long they take, at most
 
-    LDA #0:STA u
-.plots
-    LDY u:CPY norder:BCS plotted
-    LDX Order,Y:STX i
-    LDA LgReg,X:BPL inregion
-    JSR xor_large
-    JMP plotnext
-.inregion
-    TAY:LDA RegDone,Y:BNE plotnext      ; (done with its region)
+    LDA #0:STA nitem:STA u
+.items
+    LDY u:CPY norder:BCC item
+    JMP itemed
+.item
+    LDX Order,Y
+    LDA LgReg,X:BMI xoritem
+    TAY:LDA RegN,Y:BNE regitem          ; (a region with 8-line sprites: the whole region an item)
+    JSR bytes8                          ; a self-erasing one alone
+    CLC:ADC #SelfTime
+    LDY nitem:STA ItemD,Y
+    TXA:ORA #&40:STA ItemId,Y
+    JMP boxlines
+.xoritem
+    JSR bytes8
+    STA t:LSR A:LSR A:CLC:ADC t:ADC #XorTime   ; (its bytes an eighth and a 32nd: 2 XORs a byte)
+    LDY nitem:STA ItemD,Y
+    TXA:STA ItemId,Y
+.boxlines
+    LDA BoxY0,X:STA ay0
+    LDA BoxY1,X:STA ay1
+    JMP window
+.regitem
+    LDA RegDone,Y:BEQ @+
+    JMP nextitem                        ; (made already)
+.@
+    LDA #1:STA RegDone,Y
     STY r
-    JSR plot_region
-.plotnext
+    LDA RegY0,Y:STA ay0
+    LDA RegY1,Y:STA ay1
+    LDA RegLo,Y:SEC:SBC #8:BCS @+
+    LDA #0
+.@
+    CMP ay0:BCS @+
+    STA ay0
+.@
+    LDA RegHi,Y:CLC:ADC #16:BCC @+
+    LDA #&FF
+.@
+    CMP ay1:BCC @+
+    STA ay1
+.@
+    LDA RegN,Y:ASL A:ADC #SelfTime:STA t    ; its time: 2 steps an 8-line sprite, and its large sprites'
+    LDY #0
+.regbytes
+    CPY norder:BCS regtimed
+    LDX Order,Y
+    LDA LgReg,X:CMP r:BNE @+
+    JSR bytes8:CLC:ADC t:STA t
+.@
+    INY
+    JMP regbytes
+.regtimed
+    LDA r:ORA #&80
+    LDY nitem
+    STA ItemId,Y
+    LDA t:STA ItemD,Y
+.window
+    LDA ay0:LSR A:LSR A:CLC:ADC #BeamTop:STA ItemW0,Y
+    LDA ay1:CMP #PlayRows*8:BCC @+      ; (the status rows: nothing's drawn there)
+    LDA #PlayRows*8
+.@
+    CLC:ADC #3:LSR A:LSR A:CLC:ADC #BeamTop+1:STA ItemW1,Y ; (+ 1: T1C-H's steps)
+    SEC:SBC ItemW0,Y:CLC:ADC ItemD,Y    ; its lines and its time: more than a frame's steps, too long
+    CMP #BeamSteps:LDA #0:ROL A:STA ItemLong,Y
+    LDA #0:STA ItemDone,Y
+    INC nitem
+.nextitem
     INC u
-    JMP plots
-.plotted
+    JMP items
+.itemed
+
+    \\ plotted as the beam allows: an item that will be done before the beam reaches its top, or one the beam
+    \\ is past that will be done before it's back; the first such by its top, else wait
+
+    LDA nitem:STA nleft
+.sched
+    LDA nleft:BNE @+
+    JMP scheduled
+.@
+    LDA #BeamSteps:SEC:SBC &FE45:STA now    ; system VIA: T1C-H, the beam
+    LDX #0
+.try
+    CPX nitem:BCS sched                 ; (none yet: again)
+    LDA ItemDone,X:BNE nexttry
+    LDA now:CLC:ADC ItemD,X:STA t       ; (when it would be done)
+    CMP ItemW0,X:BCC go                 ; (before the beam's at its top)
+    LDA now:CMP ItemW1,X:BCC nexttry    ; (the beam not past it yet)
+    LDA ItemLong,X:BNE go               ; (too long for any gap: now)
+    SEC
+    LDA ItemW0,X:ADC #BeamSteps-1       ; (C set) its top, the next frame
+    CMP t:BCS go                        ; (done before the beam's back)
+.nexttry
+    INX:BNE try                         ; (always)
+    ZA_UNREACHABLE
+.go
+.sched_plot                             ; (tools/beamcheck.mjs: an item's plot starts; X the item)
+    LDA #1:STA ItemDone,X
+    DEC nleft
+    LDA ItemId,X:BMI goregion
+    AND #&3F:STA i
+    LDA ItemId,X:AND #&40:BNE goself
+    JSR xor_large
+    JMP sched_done
+.goself
+    JSR self_erase
+    JMP sched_done
+.goregion
+    AND #&7F:STA r:TAY:JSR plot_region
+.sched_done                             ; (and ends)
+    JMP sched
+.scheduled
 
     \\ the slots' marks cleared
 
@@ -453,7 +638,7 @@ ENDSECTION
     LDX k:LDA SmNext,X:TAX
     JMP smoffs
 .smoffed
-    LDY u                               ; its large sprites: from this one on, in order
+    LDY #0                              ; its large sprites, in order
 .members
     CPY norder:BCS membered
     LDX Order,Y
@@ -512,6 +697,18 @@ ENDSECTION
     JMP large_xor_on                    ; (and back)
 .xgone
     LDA #0:STA SlotW,Y
+    RTS
+
+\\ A large sprite's bytes, an eighth (its new rectangle's width × its bands): plot X (X, Y kept).
+
+.bytes8
+    LDA NewH,X:CLC:ADC #7:LSR A:LSR A:LSR A:STA k
+    LDA #0
+.b8
+    DEC k:BMI b8done
+    CLC:ADC NewW,X
+    JMP b8
+.b8done
     RTS
 
 \\ The new rectangle and data of plot X (X its sprite after; Y kept).

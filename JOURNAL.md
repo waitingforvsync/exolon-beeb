@@ -409,3 +409,26 @@ Plotting alone (the bench's decoding off), cycles a pass, the hybrid's commands 
   fetched twice), about 1,000 cycles a large sprite, and about 110 a bound 8-line one.
 - The data bank: 15,073 bytes (5,027 packed), 799 free below DataVars. Not yet: waiting for the beam (the order
   is there), and a check in jsbeeb that no object is plotted while the beam is on its lines.
+
+### The plot driver waits for the beam
+- D39 recorded. Each item (an XORed large sprite, a self-erasing one whose region has no 8-line sprites, or a
+  region with them) gets the window when the beam is on its lines, in T1C-H's steps (4 lines, 256 us) since
+  the frame's interrupt at line 192 (line 0 is step 30), and a time, at most: an XORed large sprite 4 steps and
+  1.25 a band-column (8 bytes), a self-erasing one 2 and 1, a region 2, 1 a band-column of its large sprites
+  and 2 an 8-line sprite (fitted to 1,060 items timed in zone 99). The driver plots the first item, by its top,
+  that will be done before the beam reaches its top, or that the beam is past and that will be done before the
+  beam is back; else it waits. An item too long for any gap in the beam goes once the beam is past it.
+- A region's 8-line sprites now need its columns too (from 6 left of its large sprites to 4 right: an 8-line
+  sprite is 3 wide and moves 4), else they're free: in zone 0's grenade passes the debris was all in the
+  player's rows, so his region took more than a frame.
+- `tools/beamcheck.mjs` stops at each item's start and end and reads the beam from jsbeeb's CRTC counters: an
+  item whose lines the beam scans while it's plotted is a tear. Its first runs had my mistakes: a window's
+  bottom one step short (T1C-H's resolution), time estimates of a fixed 4 steps (a self-erasing player takes
+  12 or more), and a scheduler that waited for ever on an item too long for any gap.
+- Tears: zone 0 none of 226 items; zone 38 10 of 473; 94 61 of 496; 99 23 of 2,062. Every one is an item too
+  long for any gap (80, 138 and 53 of them): regions with many spores or debris by the player, which take more
+  than a frame. Every pass's screen is still the same as all-XOR's in all four logs.
+- Pass times with the waits (the bench's decoding off): zone 0 median 7,623, worst 45,614; 38 35,860, 92,767;
+  94 47,804, 94,069; 99 42,261, 101,997. Passes over two frames: 0, 5, 10 and 8 of 380-400.
+- Left for the frame-time work: long regions (bind an 8-line sprite only to the large sprites its box meets,
+  or split a region's work), and the waiting itself (the game's logic could run in it).

@@ -235,6 +235,14 @@ beam waiting"
 - The game must list every 8-line sprite on the screen each pass, and move none more than 8 lines and 8
   pixels a pass.
 
+### D40. Finish the game autonomously; then the frame time; 32K of sideways RAM (2026-11-01)
+Rich: "please finish adding all the features of cpc exolon. Same workflow: after every working feature, get an
+agent to review and optimise; then commit, push and release. When we have what looks like a playable game, keep
+on iterating to try to reduce the frame time so everything fits comfortably inside a 25 fps update. If there's
+still no way to make big explosions fit, we will take the temporary reduction in frame rate and call it an
+artistic / cinematic decision :) Try to keep everything within 32k sideways ram budget. If you can find ways to
+reduce code size with little impact on perf, please do."
+
 ---
 
 ## Proposed
