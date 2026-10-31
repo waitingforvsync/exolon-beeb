@@ -257,3 +257,47 @@ Plotting, cycles a pass (the first version → now), the screens hash-identical 
   each sprite's rectangle rather than `sprite_rect` working it out twice.
 - A risk to keep in mind: the 8-line paths don't clip, so y must stay at most 168 (from 185 they would write
   past `&8000`).
+
+### Overlaps: the Spectrum checked, and XOR where sprites meet
+- Rich asked whether the Spectrum masks. It doesn't: single-stepping 60-80 passes of zones 1, 38 and 94 and
+  noting every write to its bitmap, the only writers are XOR loops (the 32-line plotter `&7814`, 16-line
+  `&7A37`, 8-line `&9325`, the bolt `&8313`) and the tiles' and characters' stores (`&AE04`, `&AE47`). It
+  shifts each sprite at run time into a buffer, ANDs the buffer with a whole cell's mask from its cell map
+  (`&5B00`, `&789E`) to hide it behind scenery, clips the right edge, and XORs it on, as the CPC does.
+- Overlaps are common: in the logs the large sprites' rectangles meet in 0 of zone 0's passes, 109 of 38's,
+  284 of 94's and 231 of 99's, mostly the player dying with aliens on him (random play overstates them).
+- The logs had two quirks of the original's, now smoothed by `tools/benchlog.py`: a large sprite plotted twice
+  in a pass (1-15 a log; the last kept, as the BBC plots once a pass), and a new 8-line object XORed off before
+  it's first drawn (122-199 a log; it cancels the pass's XOR on of the same image). Both left debris in the
+  self-erasing screens wherever a store fell between them. The 8-line set's blank frame (6) is left out (it
+  XORs nothing), and each pass is in the review's order (8-line sprites off, edges, draws, 8-line sprites on):
+  the logs had kept the CPC's order within each phase.
+- `walk` has two more blocks, XOR straight and XOR behind the map (`LDA (scr),Y:TAX:LDA Hole,X:AND (src),Y:
+  EOR (scr),Y:STA (scr),Y`, 29 cycles a byte): a pixel without bit 3 stays so, so the same pixels are masked
+  when it's XORed off. Each pair of blocks that reads the sprite has its own phase (`SETPHASE`, a macro), and
+  `xor8`'s `XEnt` went into the first sprite table's page (gensprites). `large_xor_off` and `large_xor_on`
+  XOR a slot's sprite off its old place and on at its new; each slot keeps its sprite (`SlotS`). The bench has
+  commands 5 and 6 for them; `tools/benchmode.py` recasts a log as all-XOR or hybrid.
+- Hybrid: a large sprite whose box (old rectangle and new) meets another large sprite's is XORed that pass; the
+  rest self-erase. **Every pass's screen is the same as all-XOR's** in all four logs (1,580 passes), and as
+  self-erasing's in zone 0, which has no overlaps; self-erasing alone differs in 14, 13 and 116 passes of
+  zones 38, 94 and 99.
+
+Plotting, cycles a pass (median / 90% / worst; passes over 40,000), the touch test not yet in (it's the host's):
+
+| Zone | Self-erasing (wrong where sprites meet) | All XOR | Hybrid |
+|---|---|---|---|
+| 0 | 6,776 / 18,441 / 48,629; 1 | 11,126 / 22,864 / 53,314; 8 | 6,776 / 18,441 / 48,629; 1 |
+| 38 | 29,763 / 42,560 / 57,131; 69 | 35,744 / 48,090 / 62,277; 137 | 29,937 / 42,634 / 60,894; 70 |
+| 94 | 32,355 / 57,986 / 79,604; 114 | 38,077 / 66,409 / 91,511; 187 | 32,355 / 58,686 / 79,604; 122 |
+| 99 | 25,376 / 35,946 / 76,195; 24 | 34,162 / 46,973 / 88,494; 104 | 27,647 / 39,002 / 80,039; 38 |
+
+- XORing everything costs 18-64% more than self-erasing at the median and 9-16% at the worst: each byte is read
+  and written twice, against one store. The hybrid XORs 0-16% of the large plots (91 of 800 in zone 38, 84 of
+  986 in 94, 386 of 2,444 in 99) and costs 0-9% at the median, 0-7% at the worst.
+- The cost: `walk` 1 cycle more a draw, 4 a clear (the mode's dispatch), `large_draw` 7 (`SlotS`); the data
+  bank 256 bytes more (15,172 → 15,428; packed 4,333 → 4,499), 444 free below DataVars.
+- Rich's question on a broad phase that uses the small moves: the pairwise test of boxes is about 14-22 cycles a
+  pair (at most 9 large sprites live in these logs: 36 pairs, about 800 cycles), and per-pair bookkeeping costs
+  as much as the test. Sweep and prune on a y-sorted list, kept by an insertion sort, is the form worth having,
+  since the beam ordering needs that list anyway. To be measured when it's written.

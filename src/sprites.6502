@@ -17,6 +17,8 @@ SECTION Workspace
     SKIP MaxSlots
 .SlotH
     SKIP MaxSlots
+.SlotS                                  ; its sprite (for an XOR off)
+    SKIP MaxSlots
 ENDSECTION
 
 SECTION DataVars
@@ -39,6 +41,7 @@ ZA_AUTO2 scr                            ; the steps' screen pointer: the band's 
 
 ModeDraw = 0                            ; a sprite stored straight, or behind the map's pixels
 ModeClear = 2                           ; every pixel cleared but the map's
+ModeXor = 4                             ; a sprite XORed onto every pixel but the map's
 
 \\ Walk a large sprite's rectangle a band at a time: a character row's lines of it. Y is 8k + l for its column k,
 \\ line l, on the screen and in the sprite alike, so a whole band's columns run through the unrolled steps with
@@ -51,8 +54,8 @@ ModeClear = 2                           ; every pixel cleared but the map's
 \\
 \\ Inputs:
 \\     rx, ry, rw, rh: the rectangle (on the screen: the caller clips it), rw and rh not 0, rh under 128
-\\     mode: ModeDraw or ModeClear
-\\     src, sw: the sprite's data and its width as stored (ModeDraw)
+\\     mode: ModeDraw, ModeClear or ModeXor
+\\     src, sw: the sprite's data and its width as stored (ModeDraw, ModeXor)
 \\
 \\ Outputs:
 \\     rx, ry, rw, rh, mode: preserved
@@ -69,9 +72,14 @@ ModeClear = 2                           ; every pixel cleared but the map's
     ZA_AUTO2 exit, saved                ; local: the step after the last line (hi 0: none), its first 2 bytes
 
     LDA ry:AND #7:STA phase:STA first
-    LDX mode:BNE phased                 ; (ModeClear: the steps read no sprite)
-    CMP StepsPhase:BEQ phased
-    JSR set_phase
+    LDX mode:BEQ drawing
+    CPX #ModeXor:BNE phased             ; (ModeClear: the steps read no sprite)
+    CMP XorPhase:BEQ phased
+    JSR set_xor_phase
+    JMP phased
+.drawing
+    CMP DrawPhase:BEQ phased
+    JSR set_draw_phase
 .phased
     LDA sw:ASL A:ASL A:ASL A:STA stride
     LDA rw:ASL A:ASL A:ASL A:STA fullend+1  ; Y after a whole band's last column
@@ -148,7 +156,7 @@ ModeClear = 2                           ; every pixel cleared but the map's
     LDA #0                              ; (the clears' A)
 .entry
     JMP &FFFF                           ; self-modified: the block's first step
-    ZA_CANJUMP StepsDraw, StepsDrawBehind, StepsClear, StepsClearBehind
+    ZA_CANJUMP StepsDraw, StepsDrawBehind, StepsClear, StepsClearBehind, StepsXor, StepsXorBehind
 
     \\ a column done: Y on to the next column's first step; the band's end; or the column
 
@@ -161,12 +169,12 @@ ModeClear = 2                           ; every pixel cleared but the map's
     CPY #0:BEQ banddone                 ; self-modified: Y after the last column
     LDA #0                              ; (the clears' A)
     JMP (entry+1)                       ; (the block's first step again)
-    ZA_CANJUMP StepsDraw, StepsDrawBehind, StepsClear, StepsClearBehind
+    ZA_CANJUMP StepsDraw, StepsDrawBehind, StepsClear, StepsClearBehind, StepsXor, StepsXorBehind
 .whole
 .fullend
     CPY #0:BEQ banddone                 ; self-modified: 8 × rw
     JMP (entry+1)                       ; (the clears' A still 0)
-    ZA_CANJUMP StepsDraw, StepsDrawBehind, StepsClear, StepsClearBehind
+    ZA_CANJUMP StepsDraw, StepsDrawBehind, StepsClear, StepsClearBehind, StepsXor, StepsXorBehind
 
 .banddone
     LDA exit+1:BEQ @+                   ; the step under the BNE put back
@@ -194,49 +202,59 @@ ModeClear = 2                           ; every pixel cleared but the map's
 ASSERT LO(walk.entry + 1) <> &FF, "JMP (ind)'s pointer can't end a page on an NMOS 6502"
 ASSERT SpriteMaxH < 128, "walk's left1 goes negative"
 
-\\ The steps' operands for a phase: steps 0 to phase - 1 read srca (the sprite's band above), the rest srcb.
+\\ The steps' operands for a phase, for a pair of blocks that read the sprite (straight and behind): steps 0 to
+\\ phase - 1 read srca (the sprite's band above), the rest srcb. Each pair has its own phase, so a run of walks
+\\ at one phase patches once.
 \\
 \\ Inputs:
 \\     A: the phase, 0-7
 \\
 \\ Outputs:
-\\     StepsPhase: A
+\\     the pair's phase: A
 \\     A, X, Y: corrupted
 
-.set_phase
-{
-    ZA_AUTO1 phase                      ; local: the phase
-
-    STA phase
-    STA StepsPhase
+MACRO SETPHASE memo, b1, s1, o1, b2, s2, o2    ; the blocks b1, b2: step k's operand at b + s × k + o
+    STA memo:TAX
     LDA #srcb
 FOR k = 0..7
-    STA StepsDraw + 5 * k + 1:STA StepsDrawBehind + 14 * k + 4
+    STA b1 + s1 * k + o1:STA b2 + s2 * k + o2
 NEXT
     LDA #srca
-    LDX phase
-    LDY DrawPhaseLo,X:STY patched+1
-    LDY DrawPhaseHi,X:STY patched+2
+    LDY PhaseLo,X:STY patched+1
+    LDY PhaseHi,X:STY patched+2
 .patched
     JMP &FFFF                           ; self-modified: into the list below, so steps phase - 1 to 0 get srca
-    ZA_CANJUMP drawphase
-.drawphase
+    ZA_CANJUMP list
+.list
 FOR k = 7..0
-    STA StepsDraw + 5 * k + 1:STA StepsDrawBehind + 14 * k + 4
+    STA b1 + s1 * k + o1:STA b2 + s2 * k + o2
 NEXT
     RTS
+.PhaseLo                                ; where the list starts for a phase: steps phase - 1 to 0
+    EQUB LO(list + 6 * (8 - (0..7)))
+.PhaseHi
+    EQUB HI(list + 6 * (8 - (0..7)))
+ENDMACRO
+
+.set_draw_phase
+{
+    SETPHASE DrawPhase, StepsDraw, 5, 1, StepsDrawBehind, 14, 4
 }
 
-.StepsPhase                             ; the phase the draws' operands are set for
+.set_xor_phase
+{
+    SETPHASE XorPhase, StepsXor, 7, 1, StepsXorBehind, 13, 7
+}
+
+.DrawPhase                              ; the phase the draws' operands are set for
     EQUB 4
-.DrawPhaseLo                            ; where the operand list starts for a phase: steps phase - 1 to 0
-    EQUB LO(set_phase.drawphase + 6 * (8 - (0..7)))
-.DrawPhaseHi
-    EQUB HI(set_phase.drawphase + 6 * (8 - (0..7)))
+.XorPhase                               ; the XORs'
+    EQUB 4
 
 \\ The steps: each block 8 of them, unrolled, on to stepsdone. In order: ModeDraw (straight), ModeDraw behind
-\\ the map, ModeClear (straight), ModeClear behind the map. The sprite pointers' operands are patched for the
-\\ phase (walk).
+\\ the map, ModeClear (straight), ModeClear behind the map, ModeXor (straight), ModeXor behind the map. The
+\\ sprite pointers' operands are patched for the phase (walk). An XOR behind the map changes only the pixels
+\\ without bit 3, and leaves them without it, so the same pixels are masked when it's XORed off again.
 
 .StepsDraw
 FOR k = 0..7
@@ -273,19 +291,45 @@ FOR k = 0..7
 NEXT
 .clearbehindend
     JMP walk.stepsdone
+.StepsXor
+FOR k = 0..7
+IF k < 4
+    LDA (srca),Y:EOR (scr),Y:STA (scr),Y:INY
+ELSE
+    LDA (srcb),Y:EOR (scr),Y:STA (scr),Y:INY
+ENDIF
+NEXT
+.xorend
+    JMP walk.stepsdone
+.StepsXorBehind
+FOR k = 0..7
+    LDA (scr),Y:TAX:LDA Hole,X
+IF k < 4
+    AND (srca),Y
+ELSE
+    AND (srcb),Y
+ENDIF
+    EOR (scr),Y:STA (scr),Y:INY
+NEXT
+.xorbehindend
+    JMP walk.stepsdone
 
 .EntryLo                                ; each block's step k, 8 a block
     EQUB LO(StepsDraw + 5 * (0..7)), LO(StepsDrawBehind + 14 * (0..7))
     EQUB LO(StepsClear + 3 * (0..7)), LO(StepsClearBehind + 9 * (0..7))
+    EQUB LO(StepsXor + 7 * (0..7)), LO(StepsXorBehind + 13 * (0..7))
 .EntryHi
     EQUB HI(StepsDraw + 5 * (0..7)), HI(StepsDrawBehind + 14 * (0..7))
     EQUB HI(StepsClear + 3 * (0..7)), HI(StepsClearBehind + 9 * (0..7))
+    EQUB HI(StepsXor + 7 * (0..7)), HI(StepsXorBehind + 13 * (0..7))
 .ExitOff                                ; a BNE at a block's step k to its end: the offset
     EQUB drawend - (StepsDraw + 5 * (0..7) + 2), behindend - (StepsDrawBehind + 14 * (0..7) + 2)
     EQUB clearend - (StepsClear + 3 * (0..7) + 2), clearbehindend - (StepsClearBehind + 9 * (0..7) + 2)
+    EQUB xorend - (StepsXor + 7 * (0..7) + 2), xorbehindend - (StepsXorBehind + 13 * (0..7) + 2)
 ASSERT StepsDrawBehind - StepsDraw == 5 * 8 + 3 AND StepsClear - StepsDrawBehind == 14 * 8 + 3, "step sizes"
-ASSERT StepsClearBehind - StepsClear == 3 * 8 + 3, "step sizes"
-ASSERT behindend - (StepsDrawBehind + 2) < 128, "the exit's BNE reaches its block's end"
+ASSERT StepsClearBehind - StepsClear == 3 * 8 + 3 AND StepsXor - StepsClearBehind == 9 * 8 + 3, "step sizes"
+ASSERT StepsXorBehind - StepsXor == 7 * 8 + 3 AND xorbehindend - StepsXorBehind == 13 * 8, "step sizes"
+ASSERT behindend - (StepsDrawBehind + 2) < 128 AND xorbehindend - (StepsXorBehind + 2) < 128, "the exit's BNE reaches its block's end"
 
 .TileRowLo                              ; the tile map's row r
     EQUB LO(TileMap + 32 * (0..PlayRows-1))
@@ -405,23 +449,61 @@ ASSERT behindend - (StepsDrawBehind + 2) < 128, "the exit's BNE reaches its bloc
     RTS
 }
 
-\\ Phase 2 for a large sprite: its new rectangle drawn, and kept as its slot's.
+\\ Phase 2 for a large sprite: its new rectangle drawn (large_draw) or XORed on (large_xor_on), and kept as its
+\\ slot's.
 \\
 \\ Inputs:
-\\     Y: its slot
+\\     Y: its slot, X: its sprite
 \\     rx, ry, rw, rh, src, sw: its new rectangle and data (rw 0: none)
 \\
 \\ Outputs:
-\\     SlotX, SlotY, SlotW, SlotH: its slot's
+\\     SlotX, SlotY, SlotW, SlotH, SlotS: its slot's
 \\     A, X, Y: corrupted
+
+.large_xor_on
+{
+    LDA #ModeXor:BNE large_plot         ; (always)
+    ZA_UNREACHABLE
+}
 
 .large_draw
 {
+    LDA #ModeDraw                       ; (on into large_plot)
+}
+
+.large_plot
+{
+    STA mode
+    TXA:STA SlotS,Y
     LDA rx:STA SlotX,Y
     LDA ry:STA SlotY,Y
     LDA rh:STA SlotH,Y
     LDA rw:STA SlotW,Y:BEQ none
-    LDA #ModeDraw:STA mode
+    JMP walk                            ; (and back)
+.none
+    RTS
+}
+
+\\ A large sprite XORed off its slot's rectangle (nothing if none), which stays its slot's.
+\\
+\\ Inputs:
+\\     Y: its slot
+\\
+\\ Outputs:
+\\     A, X, Y: corrupted
+
+.large_xor_off
+{
+    LDA SlotW,Y:BEQ none
+    STA rw
+    LDA SlotX,Y:STA rx
+    LDA SlotY,Y:STA ry
+    LDA SlotH,Y:STA rh
+    LDX SlotS,Y
+    LDA SprLo,X:STA src
+    LDA SprHi,X:STA src+1
+    LDA SprW,X:STA sw
+    LDA #ModeXor:STA mode
     JMP walk                            ; (and back)
 .none
     RTS
@@ -480,14 +562,6 @@ XorRunList = XorRuns + XorRunSize * (0..7)
     EQUB LO(XorRuns + XorRunSize * (0..7))
 .RunHi
     EQUB HI(XorRuns + XorRunSize * (0..7))
-IF LO(P%) < Sprite8
-    SKIP Sprite8 - LO(P%)               ; (so XEnt - Sprite8, the base xor8 indexes, is on XEnt's page)
-ENDIF
-.XEnt                                   ; an 8-line sprite's step in its run: 8 × (3 - w) steps of 7 bytes
-FOR s = Sprite8..SpriteCount-1
-    EQUB 56 * (3 - SprWList[s - Sprite8])
-NEXT
-ASSERT HI(XEnt - Sprite8) == HI(XEnt + SpriteCount - Sprite8 - 1), "XEnt read in its page"
 
     INPAGE 192
 .RowHi                                  ; a line's character row's page

@@ -122,6 +122,9 @@ make the same calls in the same order. Measured 2026-10-31 from `docs/Exolon.tzx
   Interface 2 or Kempston.
 - Its main loop is `&75BE`-`&7689`: the CPC's calls in the CPC's order, plus a fixed delay each pass
   (`&B0B7`: an LDIR of 500 bytes, ROM onto ROM, about 10,500 T), and the same padding (`&9E85`, `&9E99`).
+- It draws every sprite by XOR too (D36): the 32-line plotter `&7814`, the 16-line `&7A37`, the 8-line `&9325`,
+  each shifting at run time into a buffer, hiding it behind scenery a whole cell at a time (`&789E`, from its
+  cell map at `&5B00`) and clipping it at the right edge.
 - Uncontended, a pass takes a median 1.90 frames, about 25 passes a second over 600 passes of play. Contended
   memory would slow it somewhat. The CPC averages 20.9, so the BBC's 25 (D8) is about the original's pace.
 - `tools/cpc2spec.py` maps 111 CPC routines to their Spectrum twins and lists the constants that differ: the
@@ -146,8 +149,8 @@ make the same calls in the same order. Measured 2026-10-31 from `docs/Exolon.tzx
   furthest move a pass, or the vacated strip cleared: whichever measures cheaper).
 - **Over a non-empty tile**: `(tile AND mask) OR sprite`, the tile byte from the tile data, never the screen;
   the vacated bytes from the tile data too.
-- **Over another sprite**: back to front, the one behind drawn whole and the one in front masked where they
-  meet (Teddy Boy's P24).
+- **Over another sprite** (D36, P14): a large sprite whose old or new rectangle meets another's is XORed off
+  and on that pass, so they mix where they meet as in both originals; the rest self-erase.
 - **Each screen byte is written once a pass**, so nothing is ever seen erased. Sprites go in order of height
   against the beam, each before the beam reaches its top or after it has left its bottom.
 - **XOR for explosions and particles** (D10), as the original draws them.

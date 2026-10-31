@@ -6,6 +6,8 @@
 \\     2 slot sprite x y: phase 2: it drawn there
 \\     3 slot: phase 1: it gone, its rectangle cleared
 \\     4 sprite x y: an 8-line sprite XORed (off in phase 1, on in phase 2)
+\\     5 slot sprite x y: a large sprite XORed off its old place and on at its new
+\\     6 slot: a large sprite XORed off, gone
 
 CmdBufSize = 1024
 
@@ -35,8 +37,7 @@ ENDSECTION
     RTS
 .more
     STA op
-    CMP #3:BEQ gone
-    CMP #4:BEQ xor
+    CMP #3:BCS notlarge
 
     \\ 1 or 2: a large sprite's edges, or it drawn
 
@@ -52,6 +53,30 @@ ENDSECTION
 .edges
     JSR large_edges
     LDA #5:BNE on                       ; (always)
+.notlarge
+    BEQ gone
+    CMP #5:BCC xor                      ; (4)
+    BEQ xorlarge
+    INY:LDA (cmd),Y:STA slot:TAY        ; 6: XORed off, gone
+    JSR large_xor_off
+    LDY slot
+    LDA #0:STA SlotW,Y
+    LDA #2:BNE on                       ; (always)
+.xorlarge
+    INY:LDA (cmd),Y:STA slot:TAY
+    JSR large_xor_off
+    LDY #2:LDA (cmd),Y:TAX
+    INY:LDA (cmd),Y:STA bx
+    INY:LDA (cmd),Y:TAY
+    LDA bx:JSR sprite_rect
+    LDY slot:JSR large_xor_on
+    LDA #5
+.on
+    CLC:ADC cmd:STA cmd
+    BCC @+
+    INC cmd+1
+.@
+    JMP next
 .gone
     INY:LDA (cmd),Y:TAY
     LDA #0:STA rw
@@ -72,13 +97,7 @@ ENDSECTION
     LDA #4:BNE on                       ; (always)
 .general
     LDA bx:JSR xor8
-    LDA #4
-.on
-    CLC:ADC cmd:STA cmd
-    BCC @+
-    INC cmd+1
-.@
-    JMP next
+    LDA #4:BNE on                       ; (always)
 .done
     RTS
 }

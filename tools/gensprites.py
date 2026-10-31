@@ -6,7 +6,8 @@ on byte boundaries for each pixel shift, dithered to MODE 2, column by column.
 For now every sprite is kept raw in the data's bank, but for those OMITTED (blank, SprW 0): the suit's frames,
 the title's twinkles and the three never seen, none of which the plot logs draw. Packs unpacked between screens
 replace this (P5, P11). The six tables (SprW, SprH, SprDX, SprDY, SprLo, SprHi) are a page each, so no indexed
-read of them crosses a page, with whole sprites in the 98 bytes after each of the first five (layout()).
+read of them crosses a page, with whole sprites in the 98 bytes after each of the first five (layout()) and xor8's
+XEnt in the first.
 
 A sprite is one shift of one frame, numbered:
 - 0-49: the 32-line set (the CPC's &93CD: the player's 24 frames facing right, then the popup), frame f's even
@@ -129,6 +130,8 @@ def layout(sp):
     offsets, gaps = [0] * n, []
     for g in range(5):
         room, pos, chosen = 256 - n, 256 * g + n, []
+        if g == 0:                                  # xor8's XEnt first (read at XEnt - Sprite8 + sprite)
+            room, pos = room - (n - Sprite8First), pos + n - Sprite8First
         for i in list(order):
             if len(sp[i][4]) <= room:
                 offsets[i], pos, room = pos, pos + len(sp[i][4]), room - len(sp[i][4])
@@ -163,12 +166,17 @@ def main(out):
     used = 0
     for t, (label, vals) in enumerate(tables):
         lines += [f'.{label}', *['    EQUB ' + ', '.join(str(v) for v in vals[i:i + 10]) for i in range(0, n, 10)]]
+        if t == 0:
+            lines += ['.XEnt                                   ; xor8: an 8-line sprite\'s step in its run, 8 × (3 - w) steps of 7 bytes',
+                      '    EQUB ' + ', '.join(str(56 * (3 - s[2])) for s in sp[Sprite8First:]),
+                      'ASSERT HI(XEnt - Sprite8) == HI(XEnt + SpriteCount - Sprite8 - 1), "XEnt read in its page"']
+            used += n - Sprite8First
         if t < len(gaps):
             data = b''.join(sp[i][4] for i in gaps[t])
             used += len(data)
             lines += [f'    \\\\ sprites {", ".join(str(i) for i in gaps[t])}',
                       *['    EQUB ' + ', '.join(f'&{b:02X}' for b in data[i:i + 16]) for i in range(0, len(data), 16)],
-                      f'    SKIP {256 - n - len(data)}']
+                      f'    SKIP {256 - n - len(data) - (n - Sprite8First if t == 0 else 0)}']
     lines += ['.SpriteData', '    INCBIN "sprites.bin"',
               f'ASSERT SpriteData == SpriteTables + {256 * 5 + n}, "the sprites after the tables where gensprites put them"',
               '']
